@@ -103,7 +103,7 @@ const BusinessQualityRow = ({ metric, calculation, value, assessment, color }) =
     </tr>
 );
 
-const performBuffettCalculation = (currentPrice, eps, dividend, epsGrowth, divGrowth, futurePE) => {
+export const performBuffettCalculation = (currentPrice, eps, dividend, epsGrowth, divGrowth, futurePE) => {
     if (currentPrice <= 0) return { irr: -1, totalFutureValue: 0, projectedFuturePrice: 0, totalDividends: 0 };
 
     const epsGrowthRate = epsGrowth / 100;

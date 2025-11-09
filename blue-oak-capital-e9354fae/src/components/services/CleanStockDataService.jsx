@@ -1,5 +1,5 @@
 
-import { performBuffettCalculation } from "../pages/BuffettAnalysis";
+import { performBuffettCalculation } from "../../pages/BuffettAnalysis";
 
 // Stable Stock Data Service - Finnhub Only with Smart Caching
 class CleanStockDataService {

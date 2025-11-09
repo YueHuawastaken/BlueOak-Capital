@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from "react";
-import { ValuationAnalysis } from "@/api/entities";
+// import { ValuationAnalysis } from "@/api/entities";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -407,7 +407,7 @@ export default function Calculator() {
         analysis_notes: formData.analysis_notes
       };
 
-      await ValuationAnalysis.create(analysisData);
+      // await ValuationAnalysis.create(analysisData);
       setResult(analysisData);
     } catch (error) {
       console.error('Error calculating intrinsic value:', error);
