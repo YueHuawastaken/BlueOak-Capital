@@ -1,3 +1,4 @@
+// src/pages/index.jsx
 import Layout from "./Layout.jsx";
 
 import Dashboard from "./Dashboard";
@@ -9,6 +10,8 @@ import DividendPlanner from "./DividendPlanner";
 import BuffettAnalysis from "./BuffettAnalysis";
 
 import TradingGoalCalculator from "./TradingGoalCalculator";
+
+import ArbitragePutCallParity from "./ArbitragePut-CallParity"; // FIXED: Removed "pages/" from path
 
 import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 
@@ -24,6 +27,7 @@ const PAGES = {
     
     TradingGoalCalculator: TradingGoalCalculator,
     
+    ArbitragePutCallParity: ArbitragePutCallParity,
 }
 
 function _getCurrentPage(url) {
@@ -60,6 +64,8 @@ function PagesContent() {
                 <Route path="/BuffettAnalysis" element={<BuffettAnalysis />} />
                 
                 <Route path="/TradingGoalCalculator" element={<TradingGoalCalculator />} />
+                
+                <Route path="/ArbitragePutCallParity" element={<ArbitragePutCallParity />} />
                 
             </Routes>
         </Layout>

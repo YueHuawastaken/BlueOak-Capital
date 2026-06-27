@@ -1,5 +1,4 @@
-
-
+// src/pages/Layout.jsx
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -7,11 +6,12 @@ import {
   LayoutDashboard, 
   Calculator, 
   PiggyBank, 
-  Target, // Replaced TrendingUp with Target
+  Target,
   User,
   Menu,
   X,
-  BookOpen
+  BookOpen,
+  Scale
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -38,9 +38,14 @@ const navigationItems = [
     icon: PiggyBank,
   },
   {
-    title: "Goal Calculator", // Changed from "Portfolio"
-    url: createPageUrl("TradingGoalCalculator"), // Changed URL
-    icon: Target, // Changed icon
+    title: "Goal Calculator",
+    url: createPageUrl("TradingGoalCalculator"),
+    icon: Target,
+  },
+  {
+    title: "Arbitrage Screener",
+    url: createPageUrl("ArbitragePutCallParity"),
+    icon: Scale,
   },
 ];
 
@@ -56,7 +61,7 @@ export default function Layout({ children, currentPageName }) {
           <div className="flex h-16 shrink-0 items-center">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl flex items-center justify-center">
-                <Target className="w-6 h-6 text-white" /> {/* Changed icon */}
+                <Target className="w-6 h-6 text-white" />
               </div>
               <div>
                 <h1 className="text-xl font-bold text-slate-900">BlueOak</h1>
@@ -108,7 +113,7 @@ export default function Layout({ children, currentPageName }) {
         </Button>
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center">
-            <Target className="w-4 h-4 text-white" /> {/* Changed icon */}
+            <Target className="w-4 h-4 text-white" />
           </div>
           <h1 className="text-lg font-bold text-slate-900">BlueOak</h1>
         </div>
@@ -124,7 +129,7 @@ export default function Layout({ children, currentPageName }) {
                 <div className="flex h-16 shrink-0 items-center justify-between">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 bg-gradient-to-br from-blue-600 to-blue-700 rounded-lg flex items-center justify-center">
-                      <Target className="w-4 h-4 text-white" /> {/* Changed icon */}
+                      <Target className="w-4 h-4 text-white" />
                     </div>
                     <h1 className="text-lg font-bold text-slate-900">BlueOak</h1>
                   </div>
@@ -171,4 +176,3 @@ export default function Layout({ children, currentPageName }) {
     </div>
   );
 }
-
