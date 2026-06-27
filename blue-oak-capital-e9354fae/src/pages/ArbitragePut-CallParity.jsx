@@ -11,15 +11,14 @@ import {
   AlertCircle,
   CheckCircle,
   Table,
-  ArrowUpRight,
-  ArrowDownRight,
-  DollarSign
+  Calendar,
+  DollarSign,
+  HelpCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -34,6 +33,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 // Helper functions
 const calculatePresentValue = (strikePrice, riskFreeRate, timeToMaturity) => {
@@ -48,137 +53,163 @@ const calculateTheoreticalCall = (putPrice, stockPrice, presentValueK) => {
   return stockPrice + putPrice - presentValueK;
 };
 
-const identifyArbitrage = (marketPrice, theoreticalPrice, optionType) => {
-  const difference = theoreticalPrice - marketPrice;
-  const threshold = 0.01;
-
-  if (Math.abs(difference) < threshold) {
+// Identify arbitrage using BID/ASK prices
+const identifyArbitrageWithSpread = (S, K, callBid, callAsk, putBid, putAsk, pvK) => {
+  // When SELLING options, you get the BID price
+  // When BUYING options, you pay the ASK price
+  
+  // Strategy 1: Sell Put + Short Stock + Buy Call + Lend PV(K)
+  // This works if PUT is overpriced
+  const sellPutBuyCallProfit = putBid + S - callAsk - pvK;
+  
+  // Strategy 2: Buy Put + Buy Stock + Sell Call + Borrow PV(K)
+  // This works if PUT is underpriced
+  const buyPutSellCallProfit = pvK + callBid - putAsk - S;
+  
+  let opportunity = null;
+  
+  // Check Strategy 1: Put overpriced
+  if (sellPutBuyCallProfit > 0.01) {
+    opportunity = {
+      type: 'sell_put',
+      action: 'Sell Put',
+      description: 'PUT option is OVERPRICED',
+      profit: sellPutBuyCallProfit,
+      steps: [
+        `Sell Put at BID $${putBid.toFixed(2)}`,
+        `Short Stock at $${S.toFixed(2)}`,
+        `Buy Call at ASK $${callAsk.toFixed(2)}`,
+        `Lend PV(K) at $${pvK.toFixed(2)}`
+      ],
+      initialCashFlow: sellPutBuyCallProfit,
+      severity: 'warning'
+    };
+  }
+  
+  // Check Strategy 2: Put underpriced
+  if (buyPutSellCallProfit > 0.01) {
+    // Only take if better than Strategy 1 or Strategy 1 doesn't exist
+    if (!opportunity || buyPutSellCallProfit > opportunity.profit) {
+      opportunity = {
+        type: 'buy_put',
+        action: 'Buy Put',
+        description: 'PUT option is UNDERPRICED',
+        profit: buyPutSellCallProfit,
+        steps: [
+          `Buy Put at ASK $${putAsk.toFixed(2)}`,
+          `Buy Stock at $${S.toFixed(2)}`,
+          `Sell Call at BID $${callBid.toFixed(2)}`,
+          `Borrow PV(K) at $${pvK.toFixed(2)}`
+        ],
+        initialCashFlow: buyPutSellCallProfit,
+        severity: 'success'
+      };
+    }
+  }
+  
+  // No arbitrage
+  if (!opportunity) {
     return {
       type: 'none',
-      message: 'Prices are in alignment. No arbitrage opportunity detected.',
-      action: 'No action needed',
+      action: 'No Arbitrage',
+      description: 'Prices are in alignment',
       profit: 0,
-      severity: 'info',
+      steps: [],
+      initialCashFlow: 0,
+      severity: 'info'
     };
   }
-
-  if (difference > threshold) {
-    return {
-      type: 'buy',
-      message: `${optionType} is UNDERPRICED. Buy ${optionType} and take the opposite synthetic position.`,
-      action: `Buy ${optionType}`,
-      profit: difference,
-      severity: 'success',
-    };
-  } else {
-    return {
-      type: 'sell',
-      message: `${optionType} is OVERPRICED. Sell ${optionType} and take the opposite synthetic position.`,
-      action: `Sell ${optionType}`,
-      profit: -difference,
-      severity: 'warning',
-    };
-  }
+  
+  return opportunity;
 };
 
-// Generate arbitrage execution table - FIXED: Use plain text strings
-const generateArbitrageTable = (S, K, c, p, pvK, opportunity) => {
+// Generate arbitrage execution table
+const generateArbitrageTable = (S, K, callBid, callAsk, putBid, putAsk, pvK, opportunity) => {
   if (opportunity.type === 'none') return null;
-
-  // Determine if we're selling or buying the put
-  const isPutOverpriced = opportunity.type === 'sell';
-  const isPutUnderpriced = opportunity.type === 'buy';
   
   let positions = [];
   let totalCashFlow = 0;
-
-  if (isPutOverpriced) {
-    // Sell Put - Overpriced PUT means SELL the put
+  
+  if (opportunity.type === 'sell_put') {
+    // Sell Put + Short Stock + Buy Call + Lend PV(K)
     positions.push({
       action: 'Sell Put',
-      description: `Receive premium from selling the put option at $${p.toFixed(2)}`,
-      cashFlow: `+$${p.toFixed(2)}`,
-      payoffSTLessK: `-($${K.toFixed(2)} - Stock Price)`,
+      description: `Sell put option at BID price $${putBid.toFixed(2)}`,
+      cashFlow: `+$${putBid.toFixed(2)}`,
+      payoffSTLessK: `-($${K.toFixed(2)} - Sₜ)`,
       payoffSTGreaterK: '$0',
     });
-    totalCashFlow += p;
-
-    // Short Stock
+    totalCashFlow += putBid;
+    
     positions.push({
       action: 'Short Stock',
-      description: `Borrow and sell the stock today at $${S.toFixed(2)}`,
+      description: `Borrow and sell stock at $${S.toFixed(2)}`,
       cashFlow: `+$${S.toFixed(2)}`,
-      payoffSTLessK: '-Stock Price',
-      payoffSTGreaterK: '-Stock Price',
+      payoffSTLessK: '-Sₜ',
+      payoffSTGreaterK: '-Sₜ',
     });
     totalCashFlow += S;
-
-    // Buy Call
+    
     positions.push({
       action: 'Buy Call',
-      description: `Pay premium of $${c.toFixed(2)} to buy the call option`,
-      cashFlow: `-$${c.toFixed(2)}`,
+      description: `Buy call option at ASK price $${callAsk.toFixed(2)}`,
+      cashFlow: `-$${callAsk.toFixed(2)}`,
       payoffSTLessK: '$0',
-      payoffSTGreaterK: `Stock Price - $${K.toFixed(2)}`,
+      payoffSTGreaterK: `Sₜ - $${K.toFixed(2)}`,
     });
-    totalCashFlow -= c;
-
-    // Lend PV(K)
+    totalCashFlow -= callAsk;
+    
     positions.push({
       action: `Lend PV($${K.toFixed(2)})`,
-      description: `Invest $${pvK.toFixed(2)} at risk-free rate to receive $${K.toFixed(2)} at maturity`,
+      description: `Invest $${pvK.toFixed(2)} at risk-free rate`,
       cashFlow: `-$${pvK.toFixed(2)}`,
       payoffSTLessK: `+$${K.toFixed(2)}`,
       payoffSTGreaterK: `+$${K.toFixed(2)}`,
     });
     totalCashFlow -= pvK;
-
-  } else if (isPutUnderpriced) {
-    // Buy Put - Underpriced PUT means BUY the put
+    
+  } else if (opportunity.type === 'buy_put') {
+    // Buy Put + Buy Stock + Sell Call + Borrow PV(K)
     positions.push({
       action: 'Buy Put',
-      description: `Pay premium of $${p.toFixed(2)} to buy the put option`,
-      cashFlow: `-$${p.toFixed(2)}`,
-      payoffSTLessK: `$${K.toFixed(2)} - Stock Price`,
+      description: `Buy put option at ASK price $${putAsk.toFixed(2)}`,
+      cashFlow: `-$${putAsk.toFixed(2)}`,
+      payoffSTLessK: `$${K.toFixed(2)} - Sₜ`,
       payoffSTGreaterK: '$0',
     });
-    totalCashFlow -= p;
-
-    // Buy Stock
+    totalCashFlow -= putAsk;
+    
     positions.push({
       action: 'Buy Stock',
-      description: `Purchase the stock today at $${S.toFixed(2)}`,
+      description: `Buy stock at $${S.toFixed(2)}`,
       cashFlow: `-$${S.toFixed(2)}`,
-      payoffSTLessK: '+Stock Price',
-      payoffSTGreaterK: '+Stock Price',
+      payoffSTLessK: '+Sₜ',
+      payoffSTGreaterK: '+Sₜ',
     });
     totalCashFlow -= S;
-
-    // Sell Call
+    
     positions.push({
       action: 'Sell Call',
-      description: `Receive premium of $${c.toFixed(2)} from selling the call option`,
-      cashFlow: `+$${c.toFixed(2)}`,
+      description: `Sell call option at BID price $${callBid.toFixed(2)}`,
+      cashFlow: `+$${callBid.toFixed(2)}`,
       payoffSTLessK: '$0',
-      payoffSTGreaterK: `-(Stock Price - $${K.toFixed(2)})`,
+      payoffSTGreaterK: `-(Sₜ - $${K.toFixed(2)})`,
     });
-    totalCashFlow += c;
-
-    // Borrow PV(K)
+    totalCashFlow += callBid;
+    
     positions.push({
       action: `Borrow PV($${K.toFixed(2)})`,
-      description: `Borrow $${pvK.toFixed(2)} today, repay $${K.toFixed(2)} at maturity`,
+      description: `Borrow $${pvK.toFixed(2)} at risk-free rate`,
       cashFlow: `+$${pvK.toFixed(2)}`,
       payoffSTLessK: `-$${K.toFixed(2)}`,
       payoffSTGreaterK: `-$${K.toFixed(2)}`,
     });
     totalCashFlow += pvK;
   }
-
-  // Calculate net payoffs for display using the current K value
-  const payoffSTLessK = isPutOverpriced ? `+$${K.toFixed(2)} - Stock Price` : '$0';
-  const payoffSTGreaterK = isPutOverpriced ? '$0' : `+Stock Price - $${K.toFixed(2)}`;
-
+  
+  const payoffSTLessK = opportunity.type === 'sell_put' ? `+$${K.toFixed(2)} - Sₜ` : '$0';
+  const payoffSTGreaterK = opportunity.type === 'sell_put' ? '$0' : `+Sₜ - $${K.toFixed(2)}`;
+  
   return {
     positions,
     totalCashFlow: totalCashFlow.toFixed(2),
@@ -189,97 +220,82 @@ const generateArbitrageTable = (S, K, c, p, pvK, opportunity) => {
 };
 
 const ArbitragePutCallParity = () => {
-  // State for inputs
-  const [ticker, setTicker] = useState('AAPL');
-  const [stockPrice, setStockPrice] = useState(200.25);
-  const [strikePrice, setStrikePrice] = useState(210);
-  const [callPrice, setCallPrice] = useState(15.50);
-  const [putPrice, setPutPrice] = useState(12.75);
-  const [riskFreeRate, setRiskFreeRate] = useState(0.045);
-  const [timeToMaturity, setTimeToMaturity] = useState(0.25);
+  // State for inputs - MATCHING BROKERAGE ACCOUNT
+  const [ticker, setTicker] = useState('AVGO');
+  const [stockPrice, setStockPrice] = useState(365.02);
+  const [strikePrice, setStrikePrice] = useState(372.50);
+  const [daysToExpiry, setDaysToExpiry] = useState(90);
+  const [callBid, setCallBid] = useState(3.75);
+  const [callAsk, setCallAsk] = useState(6.40);
+  const [putBid, setPutBid] = useState(11.15);
+  const [putAsk, setPutAsk] = useState(13.40);
+  const [riskFreeRate, setRiskFreeRate] = useState(4.5);
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [arbitrageOpportunity, setArbitrageOpportunity] = useState(null);
   const [calculationHistory, setCalculationHistory] = useState([]);
-
+  
   // Calculate results
   const calculateParity = () => {
     setIsLoading(true);
-
-    // Use setTimeout to simulate calculation and prevent UI freeze
+    
     setTimeout(() => {
       try {
-        // Use the current state values
         const S = stockPrice;
         const K = strikePrice;
-        const c = callPrice;
-        const p = putPrice;
-        const r = riskFreeRate;
-        const T = timeToMaturity;
-
+        const T = daysToExpiry / 365;
+        const r = riskFreeRate / 100;
+        
         const pvK = calculatePresentValue(K, r, T);
-        const theoreticalPut = calculateTheoreticalPut(c, S, pvK);
-        const theoreticalCall = calculateTheoreticalCall(p, S, pvK);
-
-        const putArbitrage = identifyArbitrage(p, theoreticalPut, 'PUT');
-        const callArbitrage = identifyArbitrage(c, theoreticalCall, 'CALL');
-
-        const hasArbitrage = putArbitrage.type !== 'none' || callArbitrage.type !== 'none';
-        const bestOpportunity = putArbitrage.type !== 'none' ? putArbitrage : callArbitrage;
-
-        // Generate arbitrage execution table data with current values
-        const arbitrageTable = generateArbitrageTable(
-          S,
-          K,
-          c,
-          p,
-          pvK,
-          bestOpportunity
-        );
-
+        const theoreticalPut = calculateTheoreticalPut((callBid + callAsk) / 2, S, pvK);
+        const theoreticalCall = calculateTheoreticalCall((putBid + putAsk) / 2, S, pvK);
+        
+        // Use BID/ASK to find arbitrage
+        const opportunity = identifyArbitrageWithSpread(S, K, callBid, callAsk, putBid, putAsk, pvK);
+        
+        // Generate execution table
+        const arbitrageTable = generateArbitrageTable(S, K, callBid, callAsk, putBid, putAsk, pvK, opportunity);
+        
         const newResults = {
           pvK,
           theoreticalPut,
           theoreticalCall,
-          differencePut: theoreticalPut - p,
-          differenceCall: theoreticalCall - c,
-          hasArbitrage,
-          putArbitrage,
-          callArbitrage,
-          bestOpportunity,
+          midCall: (callBid + callAsk) / 2,
+          midPut: (putBid + putAsk) / 2,
+          differencePut: theoreticalPut - ((putBid + putAsk) / 2),
+          differenceCall: theoreticalCall - ((callBid + callAsk) / 2),
+          hasArbitrage: opportunity.type !== 'none',
+          opportunity,
           arbitrageTable,
-          parityEquation: `${S.toFixed(2)} + ${p.toFixed(2)} = ${c.toFixed(2)} + ${pvK.toFixed(2)}`,
-          leftSide: (S + p).toFixed(2),
-          rightSide: (c + pvK).toFixed(2),
-          // Store current values for display
-          currentStockPrice: S,
-          currentStrikePrice: K,
-          currentCallPrice: c,
-          currentPutPrice: p,
+          parityEquation: `${S.toFixed(2)} + ${((putBid + putAsk) / 2).toFixed(2)} = ${((callBid + callAsk) / 2).toFixed(2)} + ${pvK.toFixed(2)}`,
+          leftSide: (S + ((putBid + putAsk) / 2)).toFixed(2),
+          rightSide: (((callBid + callAsk) / 2) + pvK).toFixed(2),
+          daysToExpiry,
         };
-
+        
         setResults(newResults);
-        setArbitrageOpportunity(bestOpportunity);
-
+        setArbitrageOpportunity(opportunity);
+        
+        // Save history
         const historyEntry = {
           timestamp: new Date(),
           ticker,
           stockPrice: S,
           strikePrice: K,
-          callPrice: c,
-          putPrice: p,
-          riskFreeRate: r,
-          timeToMaturity: T,
+          daysToExpiry,
+          callBid,
+          callAsk,
+          putBid,
+          putAsk,
           pvK,
           theoreticalPut,
           theoreticalCall,
-          differencePut: theoreticalPut - p,
-          differenceCall: theoreticalCall - c,
-          hasArbitrage,
-          bestOpportunity: bestOpportunity.message,
+          hasArbitrage: opportunity.type !== 'none',
+          profit: opportunity.profit,
+          action: opportunity.action,
         };
         setCalculationHistory(prev => [historyEntry, ...prev].slice(0, 10));
-
+        
         setIsLoading(false);
       } catch (error) {
         console.error('Calculation error:', error);
@@ -287,37 +303,38 @@ const ArbitragePutCallParity = () => {
       }
     }, 500);
   };
-
+  
   const resetForm = () => {
-    setTicker('AAPL');
-    setStockPrice(200.25);
-    setStrikePrice(210);
-    setCallPrice(15.50);
-    setPutPrice(12.75);
-    setRiskFreeRate(0.045);
-    setTimeToMaturity(0.25);
+    setTicker('AVGO');
+    setStockPrice(365.02);
+    setStrikePrice(372.50);
+    setDaysToExpiry(90);
+    setCallBid(3.75);
+    setCallAsk(6.40);
+    setPutBid(11.15);
+    setPutAsk(13.40);
+    setRiskFreeRate(4.5);
     setResults(null);
     setArbitrageOpportunity(null);
   };
-
-  // Auto-calculate on mount
+  
   useEffect(() => {
     calculateParity();
   }, []);
-
+  
   return (
     <div className="container mx-auto py-8 px-4 max-w-7xl">
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900 flex items-center gap-3">
           <Scale className="w-8 h-8 text-blue-600" />
-          Arbitrage & Put-Call Parity Screener
+          Put-Call Parity Arbitrage Screener
         </h1>
         <p className="text-slate-600 mt-2">
-          Identify risk-free arbitrage opportunities using the Put-Call Parity relationship: S + p = c + PV(K)
+          Find risk-free arbitrage opportunities using real brokerage data
         </p>
       </div>
-
+      
       <div className="grid grid-cols-1 lg:grid-cols-7 gap-6">
         {/* Input Section */}
         <div className="lg:col-span-4">
@@ -325,23 +342,29 @@ const ArbitragePutCallParity = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Calculator className="w-5 h-5" />
-                Input Parameters
+                Brokerage Inputs
               </CardTitle>
+              <p className="text-sm text-slate-500 mt-1">
+                Enter the values from your brokerage option chain
+              </p>
             </CardHeader>
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Ticker */}
                 <div className="space-y-2">
                   <Label htmlFor="ticker">Ticker Symbol</Label>
                   <Input
                     id="ticker"
                     value={ticker}
                     onChange={(e) => setTicker(e.target.value.toUpperCase())}
-                    placeholder="AAPL"
+                    placeholder="AVGO"
                     className="font-mono"
                   />
                 </div>
+                
+                {/* Stock Price */}
                 <div className="space-y-2">
-                  <Label htmlFor="stockPrice">Current Stock Price (S)</Label>
+                  <Label htmlFor="stockPrice">Stock Price (S)</Label>
                   <Input
                     id="stockPrice"
                     type="number"
@@ -351,6 +374,8 @@ const ArbitragePutCallParity = () => {
                     className="font-mono"
                   />
                 </div>
+                
+                {/* Strike Price */}
                 <div className="space-y-2">
                   <Label htmlFor="strikePrice">Strike Price (K)</Label>
                   <Input
@@ -362,59 +387,166 @@ const ArbitragePutCallParity = () => {
                     className="font-mono"
                   />
                 </div>
+                
+                {/* Days to Expiry */}
                 <div className="space-y-2">
-                  <Label htmlFor="maturity">Time to Maturity (T)</Label>
-                  <Select value={String(timeToMaturity)} onValueChange={(v) => setTimeToMaturity(parseFloat(v))}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select maturity" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="0.0833">1 Month</SelectItem>
-                      <SelectItem value="0.1667">2 Months</SelectItem>
-                      <SelectItem value="0.25">3 Months</SelectItem>
-                      <SelectItem value="0.5">6 Months</SelectItem>
-                      <SelectItem value="0.75">9 Months</SelectItem>
-                      <SelectItem value="1">1 Year</SelectItem>
-                      <SelectItem value="1.5">1.5 Years</SelectItem>
-                      <SelectItem value="2">2 Years</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="callPrice">Call Option Price (c)</Label>
+                  <Label htmlFor="daysToExpiry" className="flex items-center gap-1">
+                    Days to Expiry
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-4 h-4 text-slate-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="max-w-xs text-xs">
+                            Enter the number of days until expiration from your brokerage option chain
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </Label>
                   <Input
-                    id="callPrice"
+                    id="daysToExpiry"
+                    type="number"
+                    step="1"
+                    value={daysToExpiry}
+                    onChange={(e) => setDaysToExpiry(parseInt(e.target.value) || 0)}
+                    className="font-mono"
+                  />
+                  <p className="text-xs text-slate-400">
+                    T = {daysToExpiry} days = {(daysToExpiry / 365).toFixed(4)} years
+                  </p>
+                </div>
+                
+                {/* Call Bid */}
+                <div className="space-y-2">
+                  <Label htmlFor="callBid" className="flex items-center gap-1">
+                    Call BID
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-4 h-4 text-slate-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="max-w-xs text-xs">
+                            BID = Price you can SELL the call at<br/>
+                            (What buyers are willing to pay)
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </Label>
+                  <Input
+                    id="callBid"
                     type="number"
                     step="0.01"
-                    value={callPrice}
-                    onChange={(e) => setCallPrice(parseFloat(e.target.value) || 0)}
+                    value={callBid}
+                    onChange={(e) => setCallBid(parseFloat(e.target.value) || 0)}
                     className="font-mono"
                   />
                 </div>
+                
+                {/* Call Ask */}
                 <div className="space-y-2">
-                  <Label htmlFor="putPrice">Put Option Price (p)</Label>
+                  <Label htmlFor="callAsk" className="flex items-center gap-1">
+                    Call ASK
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-4 h-4 text-slate-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="max-w-xs text-xs">
+                            ASK = Price you can BUY the call at<br/>
+                            (What sellers want to receive)
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </Label>
                   <Input
-                    id="putPrice"
+                    id="callAsk"
                     type="number"
                     step="0.01"
-                    value={putPrice}
-                    onChange={(e) => setPutPrice(parseFloat(e.target.value) || 0)}
+                    value={callAsk}
+                    onChange={(e) => setCallAsk(parseFloat(e.target.value) || 0)}
                     className="font-mono"
                   />
                 </div>
+                
+                {/* Put Bid */}
+                <div className="space-y-2">
+                  <Label htmlFor="putBid" className="flex items-center gap-1">
+                    Put BID
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-4 h-4 text-slate-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="max-w-xs text-xs">
+                            BID = Price you can SELL the put at<br/>
+                            (What buyers are willing to pay)
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </Label>
+                  <Input
+                    id="putBid"
+                    type="number"
+                    step="0.01"
+                    value={putBid}
+                    onChange={(e) => setPutBid(parseFloat(e.target.value) || 0)}
+                    className="font-mono"
+                  />
+                </div>
+                
+                {/* Put Ask */}
+                <div className="space-y-2">
+                  <Label htmlFor="putAsk" className="flex items-center gap-1">
+                    Put ASK
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <HelpCircle className="w-4 h-4 text-slate-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p className="max-w-xs text-xs">
+                            ASK = Price you can BUY the put at<br/>
+                            (What sellers want to receive)
+                          </p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </Label>
+                  <Input
+                    id="putAsk"
+                    type="number"
+                    step="0.01"
+                    value={putAsk}
+                    onChange={(e) => setPutAsk(parseFloat(e.target.value) || 0)}
+                    className="font-mono"
+                  />
+                </div>
+                
+                {/* Risk-Free Rate */}
                 <div className="space-y-2 md:col-span-2">
-                  <Label htmlFor="riskFree">Risk-Free Interest Rate (r) %</Label>
+                  <Label htmlFor="riskFree">Risk-Free Rate (r) %</Label>
                   <Input
                     id="riskFree"
                     type="number"
                     step="0.01"
-                    value={riskFreeRate * 100}
-                    onChange={(e) => setRiskFreeRate(parseFloat(e.target.value) / 100 || 0)}
+                    value={riskFreeRate}
+                    onChange={(e) => setRiskFreeRate(parseFloat(e.target.value) || 0)}
                     className="font-mono"
                   />
+                  <p className="text-xs text-slate-400">
+                    Current 10-year Treasury yield: ~4.5%
+                  </p>
                 </div>
               </div>
-
+              
               <div className="flex gap-3 mt-6">
                 <Button 
                   onClick={calculateParity} 
@@ -425,10 +557,10 @@ const ArbitragePutCallParity = () => {
                   {isLoading ? (
                     <>
                       <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" />
-                      Calculating...
+                      Analyzing...
                     </>
                   ) : (
-                    'Calculate Parity'
+                    'Find Arbitrage Opportunity'
                   )}
                 </Button>
                 <Button variant="outline" onClick={resetForm} size="lg">
@@ -438,7 +570,7 @@ const ArbitragePutCallParity = () => {
             </CardContent>
           </Card>
         </div>
-
+        
         {/* Results Section */}
         <div className="lg:col-span-3">
           <AnimatePresence mode="wait">
@@ -453,72 +585,78 @@ const ArbitragePutCallParity = () => {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <Target className="w-5 h-5" />
-                      Analysis Results
+                      Arbitrage Analysis
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    {/* Parity Equation */}
+                    {/* Put-Call Parity Check */}
                     <div className="bg-slate-50 p-4 rounded-lg">
                       <p className="text-sm text-slate-600">Put-Call Parity Equation</p>
-                      <p className="text-lg font-mono font-semibold text-slate-900">S + p = c + PV(K)</p>
-                      <p className="text-sm font-mono mt-1">{stockPrice.toFixed(2)} + {putPrice.toFixed(2)} = {callPrice.toFixed(2)} + {results.pvK.toFixed(2)}</p>
+                      <p className="text-sm font-mono mt-1">
+                        {stockPrice.toFixed(2)} + {results.midPut.toFixed(2)} = {results.midCall.toFixed(2)} + {results.pvK.toFixed(2)}
+                      </p>
                       <div className="flex items-center gap-2 mt-2">
-                        <Badge variant={Math.abs(parseFloat(results.leftSide) - parseFloat(results.rightSide)) < 0.01 ? "success" : "destructive"}>
-                          {Math.abs(parseFloat(results.leftSide) - parseFloat(results.rightSide)) < 0.01 ? '✓ Parity Holds' : '✗ Parity Broken'}
+                        <Badge variant={results.hasArbitrage ? "destructive" : "success"}>
+                          {results.hasArbitrage ? '⚠️ Arbitrage Found!' : '✓ Parity Holds'}
                         </Badge>
+                        {results.hasArbitrage && (
+                          <Badge variant="outline" className="bg-green-50">
+                            Profit: ${arbitrageOpportunity?.profit?.toFixed(2) || '0.00'}/share
+                          </Badge>
+                        )}
                       </div>
                     </div>
-
+                    
                     {/* Theoretical Prices */}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="border rounded-lg p-3">
                         <p className="text-xs text-slate-500">Theoretical Put</p>
-                        <p className="text-xl font-bold text-blue-600">${results.theoreticalPut.toFixed(2)}</p>
+                        <p className="text-xl font-bold text-blue-600">${results.theoreticalPut?.toFixed(2) || '0.00'}</p>
                         <p className={`text-xs ${results.differencePut > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          {results.differencePut > 0 ? '↑' : '↓'} ${Math.abs(results.differencePut).toFixed(2)}
+                          Market: ${results.midPut?.toFixed(2) || '0.00'}
                         </p>
                       </div>
                       <div className="border rounded-lg p-3">
                         <p className="text-xs text-slate-500">Theoretical Call</p>
-                        <p className="text-xl font-bold text-blue-600">${results.theoreticalCall.toFixed(2)}</p>
+                        <p className="text-xl font-bold text-blue-600">${results.theoreticalCall?.toFixed(2) || '0.00'}</p>
                         <p className={`text-xs ${results.differenceCall > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          {results.differenceCall > 0 ? '↑' : '↓'} ${Math.abs(results.differenceCall).toFixed(2)}
+                          Market: ${results.midCall?.toFixed(2) || '0.00'}
                         </p>
                       </div>
                     </div>
-
+                    
                     {/* Arbitrage Opportunity */}
                     {arbitrageOpportunity && arbitrageOpportunity.type !== 'none' && (
                       <div className="pt-2">
                         <Separator />
-                        <Alert variant={arbitrageOpportunity.type === 'buy' ? "default" : "warning"} className="mt-3">
+                        <Alert variant={arbitrageOpportunity.severity === 'warning' ? "destructive" : "default"} className="mt-3">
                           <AlertCircle className="h-4 w-4" />
                           <AlertTitle className="font-bold text-sm">
-                            {arbitrageOpportunity.type === 'buy' ? '📈 BUY OPPORTUNITY' : '📉 SELL OPPORTUNITY'}
+                            {arbitrageOpportunity.type === 'sell_put' ? '📉 SELL PUT OPPORTUNITY' : '📈 BUY PUT OPPORTUNITY'}
                           </AlertTitle>
                           <AlertDescription className="text-sm mt-1">
-                            {arbitrageOpportunity.message}
+                            {arbitrageOpportunity.description}
                           </AlertDescription>
-                          <div className="flex gap-2 mt-2">
+                          <div className="flex gap-2 mt-2 flex-wrap">
                             <Badge variant="outline" className="bg-green-50">
-                              Profit: ${arbitrageOpportunity.profit.toFixed(2)}
+                              Profit: ${arbitrageOpportunity.profit?.toFixed(2) || '0.00'}/share
                             </Badge>
                             <Badge variant="outline" className="bg-blue-50">
-                              {arbitrageOpportunity.action}
+                              ${((arbitrageOpportunity.profit || 0) * 100).toFixed(2)}/contract
                             </Badge>
                           </div>
                         </Alert>
                       </div>
                     )}
-
+                    
                     {arbitrageOpportunity && arbitrageOpportunity.type === 'none' && (
                       <div className="pt-2">
                         <Separator />
                         <Alert variant="default" className="mt-3 bg-green-50 border-green-200">
                           <CheckCircle className="h-4 w-4 text-green-600" />
-                          <AlertTitle className="font-bold text-sm text-green-600">Prices Aligned</AlertTitle>
+                          <AlertTitle className="font-bold text-sm text-green-600">No Arbitrage Detected</AlertTitle>
                           <AlertDescription className="text-sm text-green-700">
-                            No arbitrage opportunity detected. Prices are in alignment with put-call parity.
+                            Prices are aligned with put-call parity. No risk-free opportunity available.
                           </AlertDescription>
                         </Alert>
                       </div>
@@ -530,7 +668,7 @@ const ArbitragePutCallParity = () => {
           </AnimatePresence>
         </div>
       </div>
-
+      
       {/* Arbitrage Execution Table */}
       {results && results.arbitrageTable && (
         <div className="mt-6">
@@ -538,19 +676,18 @@ const ArbitragePutCallParity = () => {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Table className="w-5 h-5" />
-                Arbitrage Execution Strategy
+                How to Execute the Arbitrage
               </CardTitle>
               <p className="text-sm text-slate-500 mt-1">
-                Follow these steps to execute the arbitrage and lock in a risk-free profit of ${results.arbitrageTable.profit} per share
+                Follow these steps to lock in a risk-free profit of ${results.arbitrageTable.profit} per share (${(parseFloat(results.arbitrageTable.profit) * 100).toFixed(2)} per contract)
               </p>
             </CardHeader>
             <CardContent>
               <div className="overflow-x-auto">
                 <UITable>
                   <TableCaption>
-                    Initial cash flow is {parseFloat(results.arbitrageTable.totalCashFlow) > 0 ? 'positive' : 'negative'} 
-                    (${results.arbitrageTable.totalCashFlow}), meaning you {parseFloat(results.arbitrageTable.totalCashFlow) > 0 ? 'receive' : 'pay'} money upfront. 
-                    At maturity, the payoff is zero regardless of stock price, guaranteeing a risk-free profit of ${results.arbitrageTable.profit} per share.
+                    Initial cash flow: ${results.arbitrageTable.totalCashFlow} per share
+                    {parseFloat(results.arbitrageTable.totalCashFlow) > 0 ? ' (You receive money upfront!)' : ' (You pay money upfront)'}
                   </TableCaption>
                   <TableHeader>
                     <TableRow>
@@ -562,7 +699,7 @@ const ArbitragePutCallParity = () => {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {results.arbitrageTable.positions.map((position, index) => (
+                    {results.arbitrageTable.positions && results.arbitrageTable.positions.map((position, index) => (
                       <TableRow key={index}>
                         <TableCell className="font-medium">
                           <Badge variant="outline" className={
@@ -582,7 +719,6 @@ const ArbitragePutCallParity = () => {
                         <TableCell className="text-right font-mono text-sm">{position.payoffSTGreaterK}</TableCell>
                       </TableRow>
                     ))}
-                    {/* Total Row */}
                     <TableRow className="bg-slate-50 font-bold">
                       <TableCell colSpan={2} className="text-right">Total</TableCell>
                       <TableCell className={`text-right font-mono text-lg ${
@@ -600,28 +736,32 @@ const ArbitragePutCallParity = () => {
                   </TableBody>
                 </UITable>
               </div>
-
+              
               {/* Profit Summary */}
               <div className="mt-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-200">
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-green-800">💰 Risk-Free Profit Summary</p>
                     <p className="text-xs text-green-700 mt-1">
-                      This arbitrage guarantees a profit of ${results.arbitrageTable.profit} per share 
-                      regardless of where the stock price ends up at maturity.
+                      This arbitrage guarantees a profit of ${results.arbitrageTable.profit} per share
                     </p>
                   </div>
                   <div className="text-right">
                     <p className="text-2xl font-bold text-green-600">+${results.arbitrageTable.profit}</p>
                     <p className="text-xs text-green-700">Per Share</p>
+                    <p className="text-sm font-semibold text-green-600">+${(parseFloat(results.arbitrageTable.profit) * 100).toFixed(2)}</p>
+                    <p className="text-xs text-green-700">Per Contract (100 shares)</p>
                   </div>
                 </div>
                 <div className="mt-2 flex gap-2 flex-wrap">
                   <Badge variant="outline" className="bg-green-100 border-green-300 text-green-700">
-                    Initial Cash {parseFloat(results.arbitrageTable.totalCashFlow) > 0 ? 'Inflow' : 'Outflow'}: ${results.arbitrageTable.totalCashFlow}
+                    {parseFloat(results.arbitrageTable.totalCashFlow) > 0 ? '💰 Initial Cash Inflow' : '💳 Initial Cash Outflow'}: ${results.arbitrageTable.totalCashFlow}
                   </Badge>
                   <Badge variant="outline" className="bg-blue-100 border-blue-300 text-blue-700">
-                    Zero Risk at Maturity
+                    ✓ Zero Risk at Maturity
+                  </Badge>
+                  <Badge variant="outline" className="bg-purple-100 border-purple-300 text-purple-700">
+                    📊 1 Contract = 100 Shares
                   </Badge>
                 </div>
               </div>
@@ -629,59 +769,67 @@ const ArbitragePutCallParity = () => {
           </Card>
         </div>
       )}
-
-      {/* Educational Section & History */}
+      
+      {/* Educational Section */}
       <div className="grid grid-cols-1 lg:grid-cols-7 gap-6 mt-6">
         <div className="lg:col-span-4">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Info className="w-5 h-5" />
-                Understanding Put-Call Parity
+                Understanding Your Brokerage Data
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="bg-slate-50 p-4 rounded-lg">
-                <p className="text-sm font-semibold text-slate-900">What is Put-Call Parity?</p>
-                <p className="text-sm text-slate-600 mt-1">
-                  Put-Call Parity is a fundamental relationship that links the prices of European put and call options 
-                  with the same strike price and expiration date. The formula is:
-                </p>
-                <div className="mt-2 p-3 bg-white rounded border border-slate-200 font-mono text-center">
-                  S + p = c + PV(K)
+                <p className="text-sm font-semibold text-slate-900">What You're Looking At:</p>
+                <div className="mt-2 space-y-2 text-sm text-slate-600">
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="mt-0.5">BID</Badge>
+                    <span>Price you can <strong>SELL</strong> at (what buyers will pay)</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="mt-0.5">ASK</Badge>
+                    <span>Price you can <strong>BUY</strong> at (what sellers want)</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="mt-0.5">× #</Badge>
+                    <span>Number of contracts available at that price</span>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <Badge variant="outline" className="mt-0.5">1 Contract</Badge>
+                    <span>= 100 shares of the underlying stock</span>
+                  </div>
                 </div>
-                <p className="text-xs text-slate-500 mt-2">
-                  Where: S = Stock Price, p = Put Price, c = Call Price, PV(K) = Present Value of Strike Price
-                </p>
               </div>
-
+              
               {arbitrageOpportunity && arbitrageOpportunity.type !== 'none' && (
                 <div className="bg-amber-50 p-4 rounded-lg border border-amber-200">
-                  <p className="text-sm font-semibold text-amber-800">Why This Arbitrage Works</p>
+                  <p className="text-sm font-semibold text-amber-800">Why This Works</p>
                   <p className="text-sm text-amber-700 mt-1">
-                    When the put option is overpriced, you can:
+                    The put option is {arbitrageOpportunity.type === 'sell_put' ? 'overpriced' : 'underpriced'}. 
+                    By taking the opposite positions, you lock in a risk-free profit:
                   </p>
                   <ol className="list-decimal list-inside text-sm text-amber-700 space-y-1 mt-2">
-                    <li>Sell the overpriced put option</li>
-                    <li>Short the stock (borrow and sell it)</li>
-                    <li>Buy a call option as insurance</li>
-                    <li>Lend the present value of the strike price at the risk-free rate</li>
+                    {arbitrageOpportunity.steps && arbitrageOpportunity.steps.map((step, i) => (
+                      <li key={i}>{step}</li>
+                    ))}
                   </ol>
                   <p className="text-sm text-amber-700 mt-2">
-                    At maturity, the payoff is zero regardless of stock price, but you keep the initial profit!
+                    At maturity, all positions cancel out, leaving you with the initial profit!
                   </p>
                 </div>
               )}
             </CardContent>
           </Card>
         </div>
-
+        
         <div className="lg:col-span-3">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <History className="w-5 h-5" />
-                Recent Calculations
+                Recent Scans
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -692,12 +840,22 @@ const ArbitragePutCallParity = () => {
                       <div key={index} className="flex items-center justify-between p-2 border-b border-slate-100 hover:bg-slate-50 rounded">
                         <div>
                           <p className="font-mono text-sm font-medium">{entry.ticker}</p>
-                          <p className="text-xs text-slate-500">S: ${entry.stockPrice.toFixed(2)} K: ${entry.strikePrice.toFixed(2)}</p>
+                          <p className="text-xs text-slate-500">
+                            S: ${entry.stockPrice?.toFixed(2) || '0.00'} K: ${entry.strikePrice?.toFixed(2) || '0.00'}
+                          </p>
+                          <p className="text-xs text-slate-400">
+                            {entry.daysToExpiry} days to expiry
+                          </p>
                         </div>
                         <div className="text-right">
                           <Badge variant={entry.hasArbitrage ? "destructive" : "success"} className="text-xs">
                             {entry.hasArbitrage ? '⚠️ Arbitrage' : '✅ Aligned'}
                           </Badge>
+                          {entry.hasArbitrage && (
+                            <p className="text-xs text-green-600 font-medium mt-1">
+                              +${entry.profit?.toFixed(2) || '0.00'}/share
+                            </p>
+                          )}
                           <p className="text-xs text-slate-400 mt-1">
                             {new Date(entry.timestamp).toLocaleTimeString()}
                           </p>
@@ -706,20 +864,20 @@ const ArbitragePutCallParity = () => {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-slate-500 text-center py-8">No calculations yet</p>
+                  <p className="text-sm text-slate-500 text-center py-8">No scans yet</p>
                 )}
               </ScrollArea>
             </CardContent>
           </Card>
         </div>
       </div>
-
+      
       {/* Footer */}
       <div className="mt-8 p-4 bg-slate-50 rounded-lg border border-slate-200">
         <p className="text-xs text-slate-500 text-center">
-          💡 The put-call parity formula assumes European options, no dividends, and no transaction costs. 
-          Real-world arbitrage opportunities may be limited by transaction costs, bid-ask spreads, 
-          and early exercise features (American options).
+          💡 <strong>Real-World Note:</strong> This calculator uses BID/ASK prices to identify realistic arbitrage opportunities. 
+          Always consider transaction costs, margin requirements, and liquidity before executing any trade. 
+          American options may have early exercise premiums that affect pricing.
         </p>
       </div>
     </div>
