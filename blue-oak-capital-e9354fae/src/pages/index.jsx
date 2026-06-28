@@ -1,33 +1,27 @@
+
+
 // src/pages/index.jsx
 import Layout from "./Layout.jsx";
-
 import Dashboard from "./Dashboard";
-
 import Calculator from "./Calculator";
-
 import DividendPlanner from "./DividendPlanner";
-
 import BuffettAnalysis from "./BuffettAnalysis";
-
 import TradingGoalCalculator from "./TradingGoalCalculator";
-
-import ArbitragePutCallParity from "./ArbitragePut-CallParity"; // FIXED: Removed "pages/" from path
+import ArbitragePutCallParity from "./ArbitragePut-CallParity";
+import BondPricing from "./BondPricing";
+import ForwardAnnuityCalculator from "./ForwardAnnuityCalculator"; // NEW
 
 import { BrowserRouter as Router, Route, Routes, useLocation } from 'react-router-dom';
 
 const PAGES = {
-    
     Dashboard: Dashboard,
-    
     Calculator: Calculator,
-    
     DividendPlanner: DividendPlanner,
-    
     BuffettAnalysis: BuffettAnalysis,
-    
     TradingGoalCalculator: TradingGoalCalculator,
-    
     ArbitragePutCallParity: ArbitragePutCallParity,
+    BondPricing: BondPricing,
+    ForwardAnnuityCalculator: ForwardAnnuityCalculator, // NEW
 }
 
 function _getCurrentPage(url) {
@@ -43,7 +37,6 @@ function _getCurrentPage(url) {
     return pageName || Object.keys(PAGES)[0];
 }
 
-// Create a wrapper component that uses useLocation inside the Router context
 function PagesContent() {
     const location = useLocation();
     const currentPage = _getCurrentPage(location.pathname);
@@ -51,22 +44,15 @@ function PagesContent() {
     return (
         <Layout currentPageName={currentPage}>
             <Routes>            
-                
-                    <Route path="/" element={<Dashboard />} />
-                
-                
+                <Route path="/" element={<Dashboard />} />
                 <Route path="/Dashboard" element={<Dashboard />} />
-                
                 <Route path="/Calculator" element={<Calculator />} />
-                
                 <Route path="/DividendPlanner" element={<DividendPlanner />} />
-                
                 <Route path="/BuffettAnalysis" element={<BuffettAnalysis />} />
-                
                 <Route path="/TradingGoalCalculator" element={<TradingGoalCalculator />} />
-                
                 <Route path="/ArbitragePutCallParity" element={<ArbitragePutCallParity />} />
-                
+                <Route path="/BondPricing" element={<BondPricing />} />
+                <Route path="/ForwardAnnuityCalculator" element={<ForwardAnnuityCalculator />} /> {/* NEW */}
             </Routes>
         </Layout>
     );

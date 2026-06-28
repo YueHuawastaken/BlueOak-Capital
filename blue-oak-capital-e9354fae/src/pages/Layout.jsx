@@ -1,3 +1,5 @@
+
+
 // src/pages/Layout.jsx
 import React from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -11,7 +13,9 @@ import {
   Menu,
   X,
   BookOpen,
-  Scale
+  Scale,
+  DollarSign,
+  ArrowLeftRight
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
@@ -46,6 +50,16 @@ const navigationItems = [
     title: "Arbitrage Screener",
     url: createPageUrl("ArbitragePutCallParity"),
     icon: Scale,
+  },
+  {
+    title: "Bond Calculator",
+    url: createPageUrl("BondPricing"),
+    icon: DollarSign,
+  },
+  {
+    title: "Forward & Annuity",
+    url: createPageUrl("ForwardAnnuityCalculator"),
+    icon: ArrowLeftRight,
   },
 ];
 
