@@ -1,4 +1,5 @@
 
+// src/pages/BuffettAnalysis.jsx
 import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
@@ -7,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Tooltip, TooltipProvider, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import StockSearch from "../components/search/StockSearch";
 import CleanStockDataService from '../components/services/CleanStockDataService';
 import { 
@@ -24,7 +26,11 @@ import {
   Target,
   Undo,
   Award,
-  AlertCircle
+  AlertCircle,
+  PieChart,
+  Percent,
+  LineChart,
+  Building2
 } from 'lucide-react';
 
 const COMPANY_PROFILES = {
@@ -75,71 +81,97 @@ const DIVIDEND_SCENARIOS = {
   }
 };
 
-const DataRow = ({ label, value, tooltip }) => (
-    <div className="flex justify-between items-center text-sm py-2 border-b last:border-0">
-        <div className="flex items-center gap-1.5">
-            <span className="text-slate-600">{label}</span>
-            {tooltip && (
-                <Tooltip>
-                    <TooltipTrigger asChild>
-                        <Info className="w-3 h-3 text-slate-400 cursor-pointer" />
-                    </TooltipTrigger>
-                    <TooltipContent><p>{tooltip}</p></TooltipContent>
-                </Tooltip>
-            )}
-        </div>
-        <span className="font-semibold text-slate-800">{value}</span>
+const DataRow = ({ label, value, tooltip, highlight = false }) => (
+  <div className={`flex justify-between items-center text-sm py-2 border-b last:border-0 ${highlight ? 'bg-blue-50 -mx-2 px-2 rounded' : ''}`}>
+    <div className="flex items-center gap-1.5">
+      <span className={highlight ? 'font-semibold text-slate-700' : 'text-slate-600'}>{label}</span>
+      {tooltip && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Info className="w-3 h-3 text-slate-400 cursor-pointer" />
+          </TooltipTrigger>
+          <TooltipContent><p className="max-w-xs text-xs">{tooltip}</p></TooltipContent>
+        </Tooltip>
+      )}
     </div>
+    <span className={`font-semibold ${highlight ? 'text-blue-700' : 'text-slate-800'}`}>{value}</span>
+  </div>
 );
 
 const BusinessQualityRow = ({ metric, calculation, value, assessment, color }) => (
-    <tr className="border-b hover:bg-slate-50">
-        <td className="p-3 font-medium text-slate-900">{metric}</td>
-        <td className="p-3 text-xs text-slate-600 font-mono">{calculation}</td>
-        <td className="p-3 font-bold text-lg">{value}</td>
-        <td className={`p-3 font-medium ${color}`}>
-            {assessment}
-        </td>
-    </tr>
+  <tr className="border-b hover:bg-slate-50">
+    <td className="p-3 font-medium text-slate-900">{metric}</td>
+    <td className="p-3 text-xs text-slate-600 font-mono">{calculation}</td>
+    <td className="p-3 font-bold text-lg">{value}</td>
+    <td className={`p-3 font-medium ${color}`}>
+      {assessment}
+    </td>
+  </tr>
 );
 
 export const performBuffettCalculation = (currentPrice, eps, dividend, epsGrowth, divGrowth, futurePE) => {
-    if (currentPrice <= 0) return { irr: -1, totalFutureValue: 0, projectedFuturePrice: 0, totalDividends: 0 };
+  if (currentPrice <= 0) return { irr: -1, totalFutureValue: 0, projectedFuturePrice: 0, totalDividends: 0 };
 
-    const epsGrowthRate = epsGrowth / 100;
-    const divGrowthRate = divGrowth / 100;
+  const epsGrowthRate = epsGrowth / 100;
+  const divGrowthRate = divGrowth / 100;
 
-    const projectedEPS = eps * Math.pow(1 + epsGrowthRate, 10);
-    const projectedFuturePrice = projectedEPS * futurePE;
+  const projectedEPS = eps * Math.pow(1 + epsGrowthRate, 10);
+  const projectedFuturePrice = projectedEPS * futurePE;
 
-    let totalDividends = 0;
-    const cashFlows = [];
-    for (let year = 1; year <= 10; year++) {
-        const projectedDividend = dividend * Math.pow(1 + divGrowthRate, year);
-        totalDividends += projectedDividend;
-        cashFlows.push(projectedDividend);
+  let totalDividends = 0;
+  const cashFlows = [];
+  for (let year = 1; year <= 10; year++) {
+    const projectedDividend = dividend * Math.pow(1 + divGrowthRate, year);
+    totalDividends += projectedDividend;
+    cashFlows.push(projectedDividend);
+  }
+  cashFlows[9] += projectedFuturePrice;
+
+  let lowRate = -0.99;
+  let highRate = 2.0;
+  let irr = 0;
+
+  for (let i = 0; i < 100; i++) {
+    const midRate = (lowRate + highRate) / 2;
+    if (midRate === lowRate || midRate === highRate) break;
+
+    let npv = 0;
+    for (let j = 0; j < cashFlows.length; j++) {
+      npv += cashFlows[j] / Math.pow(1 + midRate, j + 1);
     }
-    cashFlows[9] += projectedFuturePrice; // Add final sale price to the last cash flow
 
-    let lowRate = -0.99;
-    let highRate = 2.0;
-    let irr = 0;
+    if (npv > currentPrice) lowRate = midRate;
+    else highRate = midRate;
+  }
+  irr = (lowRate + highRate) / 2;
 
-    for (let i = 0; i < 100; i++) {
-        const midRate = (lowRate + highRate) / 2;
-        if (midRate === lowRate || midRate === highRate) break; // Avoid infinite loops
+  return { irr, totalFutureValue: projectedFuturePrice + totalDividends, projectedFuturePrice, totalDividends };
+};
 
-        let npv = 0;
-        for (let j = 0; j < cashFlows.length; j++) {
-            npv += cashFlows[j] / Math.pow(1 + midRate, j + 1);
-        }
+// NEW: Calculate PVGO (Present Value of Growth Opportunities)
+const calculatePVGO = (stockPrice, eps, requiredReturn) => {
+  const noGrowthValue = eps / requiredReturn;
+  const pvgo = stockPrice - noGrowthValue;
+  const pvgoPercent = (pvgo / stockPrice) * 100;
+  return {
+    noGrowthValue,
+    pvgo,
+    pvgoPercent,
+    growthValue: pvgo,
+    valueFromGrowth: pvgoPercent
+  };
+};
 
-        if (npv > currentPrice) lowRate = midRate;
-        else highRate = midRate;
-    }
-    irr = (lowRate + highRate) / 2;
+// NEW: Calculate Gordon Growth Model value
+const calculateGordonGrowth = (dividend, requiredReturn, growthRate) => {
+  if (requiredReturn <= growthRate) return null;
+  return dividend / (requiredReturn - growthRate);
+};
 
-    return { irr, totalFutureValue: projectedFuturePrice + totalDividends, projectedFuturePrice, totalDividends };
+// NEW: Calculate implied growth from current price
+const calculateImpliedGrowth = (stockPrice, dividend, requiredReturn) => {
+  const impliedGrowth = requiredReturn - (dividend / stockPrice);
+  return impliedGrowth;
 };
 
 export default function BuffettAnalysis() {
@@ -149,7 +181,7 @@ export default function BuffettAnalysis() {
     currentPrice: '',
     eps: '',
     dividendAnnual: '',
-    bookValuePerShare: '',
+    bookValuePerSquare: '',
     companyProfile: 'quality_compounder',
     epsGrowthRate: '7.0',
     dividendScenario: 'standard_payout', 
@@ -157,7 +189,9 @@ export default function BuffettAnalysis() {
     conservativePE: '15.0',
     maxPE: '25.0',
     avgPE: '20.0',
-    tenYearYield: '4.5', // New field for 10-year Treasury yield
+    tenYearYield: '4.5',
+    // NEW: Required return for PVGO and GGM
+    requiredReturn: '8.0',
   };
 
   const [manualData, setManualData] = useState(initialFormState);
@@ -165,19 +199,23 @@ export default function BuffettAnalysis() {
   const [dataSource, setDataSource] = useState({ quote: '', historical: '' });
   const [analysisResult, setAnalysisResult] = useState(null);
   const [businessQuality, setBusinessQuality] = useState(null);
+  // NEW: PVGO and GGM results
+  const [advancedResults, setAdvancedResults] = useState(null);
+  // NEW: Active tab
+  const [activeTab, setActiveTab] = useState('valuation');
 
   useEffect(() => {
-      const conservative = parseFloat(manualData.conservativePE);
-      const max = parseFloat(manualData.maxPE);
-      if (!isNaN(conservative) && !isNaN(max) && max >= conservative) {
-          const avg = ((conservative + max) / 2).toFixed(1);
-          setManualData(prev => {
-              if (prev.avgPE !== avg) {
-                  return { ...prev, avgPE: avg };
-              }
-              return prev;
-          });
-      }
+    const conservative = parseFloat(manualData.conservativePE);
+    const max = parseFloat(manualData.maxPE);
+    if (!isNaN(conservative) && !isNaN(max) && max >= conservative) {
+      const avg = ((conservative + max) / 2).toFixed(1);
+      setManualData(prev => {
+        if (prev.avgPE !== avg) {
+          return { ...prev, avgPE: avg };
+        }
+        return prev;
+      });
+    }
   }, [manualData.conservativePE, manualData.maxPE]);
 
   const handleInputChange = (e) => {
@@ -188,7 +226,6 @@ export default function BuffettAnalysis() {
   const handleProfileChange = (profileKey) => {
     const profile = COMPANY_PROFILES[profileKey];
     if (profile) {
-      // Set new EPS growth rate from the selected profile
       const newEpsGrowth = profile.defaultGrowth;
 
       setManualData(prev => {
@@ -198,7 +235,6 @@ export default function BuffettAnalysis() {
           epsGrowthRate: newEpsGrowth.toString()
         };
 
-        // Auto-adjust dividend growth based on new EPS growth and current dividend scenario
         const currentDividendScenario = DIVIDEND_SCENARIOS[updatedManualData.dividendScenario];
         if (currentDividendScenario) {
           let newDividendGrowth;
@@ -216,7 +252,7 @@ export default function BuffettAnalysis() {
 
   const handleDividendScenarioChange = (scenarioKey) => {
     const scenario = DIVIDEND_SCENARIOS[scenarioKey];
-    const currentEpsGrowth = parseFloat(manualData.epsGrowthRate); // Use the current EPS growth rate
+    const currentEpsGrowth = parseFloat(manualData.epsGrowthRate);
 
     if (scenario) {
       let newDividendGrowth;
@@ -241,30 +277,28 @@ export default function BuffettAnalysis() {
     setFetching(true);
     setAnalysisResult(null);
     setBusinessQuality(null);
+    setAdvancedResults(null);
 
     const fetchErrorMsg = "Manual Input Required";
     let currentPrice = fetchErrorMsg;
     let eps = fetchErrorMsg;
-    let bookValuePerShare = fetchErrorMsg;
+    let bookValuePerSquare = fetchErrorMsg;
     let dividendAnnual = fetchErrorMsg;
     let quoteSource = '';
     let companyName = `${symbol} Inc.`;
 
-    // Try FMP first for quote and fundamentals
     try {
       const fmpData = await CleanStockDataService.getFmpQuote(symbol);
       
-      // Explicit checks to ensure partial data doesn't overwrite existing values if not available
       if (fmpData.currentPrice !== undefined && fmpData.currentPrice !== null) currentPrice = fmpData.currentPrice.toString();
       if (fmpData.eps !== undefined && fmpData.eps !== null) eps = fmpData.eps.toString();
-      if (fmpData.bookValue !== undefined && fmpData.bookValue !== null) bookValuePerShare = fmpData.bookValue.toString();
+      if (fmpData.bookValue !== undefined && fmpData.bookValue !== null) bookValuePerSquare = fmpData.bookValue.toString();
       if (fmpData.dividendAnnual !== undefined && fmpData.dividendAnnual !== null) dividendAnnual = fmpData.dividendAnnual.toString();
       if (fmpData.companyName) companyName = fmpData.companyName;
       
       quoteSource = 'FMP';
     } catch (fmpError) {
       console.warn('FMP quote/fundamentals failed, falling back to Finnhub:', fmpError);
-      // Fallback to Finnhub for basic price and company name
       try {
         const finnhubData = await CleanStockDataService.getStock(symbol);
         if (finnhubData) {
@@ -278,41 +312,31 @@ export default function BuffettAnalysis() {
       }
     }
 
-    // Initialize these with *default* estimates before fetching, so they always have values
-    let suggestedGrowth = '6.0'; // A reasonable default if API fails
-    let suggestedConservativePE = '15.0'; // A common conservative PE
-    let suggestedMaxPE = '25.0'; // A common max PE
-    
-    let growthSource = 'Conservative Estimates'; // Default source
-    let peSource = 'Conservative Estimates'; // Default source
+    let suggestedGrowth = '6.0';
+    let suggestedConservativePE = '15.0';
+    let suggestedMaxPE = '25.0';
+    let growthSource = 'Conservative Estimates';
+    let peSource = 'Conservative Estimates';
 
-    // Fetch historical data for P/E and growth suggestions
     try {
       const historicals = await CleanStockDataService.getHistoricalAnalysisData(symbol);
       
-      // Check if historicals data indicates a failure from the service itself
-      // (assuming CleanStockDataService returns a 'source' property to indicate this)
       if (historicals && historicals.source && historicals.source.includes('Failed')) {
           growthSource = 'Conservative Defaults (API Unavailable)';
           peSource = 'Conservative Defaults (API Unavailable)';
-          // suggestedGrowth, suggestedConservativePE, suggestedMaxPE remain as their initial defaults
-      } else if (historicals) { // Data fetched successfully
+      } else if (historicals) {
           suggestedGrowth = historicals.historical_eps_growth.toFixed(1);
           suggestedConservativePE = historicals.conservative_pe_ratio.toFixed(1);
-          suggestedMaxPE = historicals.max_pe_ratio.toFixed(1); // Use historical max PE as per outline
-          
+          suggestedMaxPE = historicals.max_pe_ratio.toFixed(1);
           growthSource = historicals.growth_calculated ? 'FMP Historical' : 'Fallback Estimate';
           peSource = historicals.pe_calculated ? 'FMP Historical' : 'Fallback Estimate';
       }
-      // If historicals is null/undefined or empty, it will use the initial defaults and sources
     } catch (historicalError) {
-      console.warn('Historical data fetch failed (likely API error, setting conservative defaults):', historicalError);
-      growthSource = 'Conservative Defaults (API Unavailable)'; // Explicitly state API unavailable
+      console.warn('Historical data fetch failed:', historicalError);
+      growthSource = 'Conservative Defaults (API Unavailable)';
       peSource = 'Conservative Defaults (API Unavailable)';
-      // Suggested values remain as initial defaults ('6.0', '15.0', '25.0')
     }
 
-    // Calculate estimated average P/E based on conservative and max *after* all fetching attempts
     const conservativePENum = parseFloat(suggestedConservativePE);
     const maxPENum = parseFloat(suggestedMaxPE);
     const estimatedAvgPE = ((conservativePENum + maxPENum) / 2).toFixed(1);
@@ -325,18 +349,17 @@ export default function BuffettAnalysis() {
         currentPrice: currentPrice,
         eps: eps,
         dividendAnnual: dividendAnnual,
-        bookValuePerShare: bookValuePerShare,
+        bookValuePerSquare: bookValuePerSquare,
         epsGrowthRate: suggestedGrowth, 
         conservativePE: suggestedConservativePE,
         maxPE: suggestedMaxPE,
         avgPE: estimatedAvgPE
       };
 
-      // After EPS growth is set, re-calculate dividend growth based on the current scenario
       const scenario = DIVIDEND_SCENARIOS[newState.dividendScenario];
       if (scenario) {
         let newDividendGrowth;
-        const newEpsGrowthNum = parseFloat(suggestedGrowth); // Use the newly set suggestedGrowth
+        const newEpsGrowthNum = parseFloat(suggestedGrowth);
         if (scenario.useEpsBasedGrowth && !isNaN(newEpsGrowthNum)) {
           newDividendGrowth = Math.max(0, newEpsGrowthNum + scenario.adjustment);
         } else {
@@ -360,19 +383,21 @@ export default function BuffettAnalysis() {
     const currentPrice = parseFloat(manualData.currentPrice);
     const eps = parseFloat(manualData.eps);
     const dividend = parseFloat(manualData.dividendAnnual);
-    const bookValue = parseFloat(manualData.bookValuePerShare);
+    const bookValue = parseFloat(manualData.bookValuePerSquare);
     const tenYearYield = parseFloat(manualData.tenYearYield);
+    const requiredReturn = parseFloat(manualData.requiredReturn) / 100;
 
     if (isNaN(currentPrice) || isNaN(eps) || isNaN(dividend) || isNaN(bookValue)) {
       return null;
     }
 
-    // Calculate metrics
     const roe = (eps / bookValue) * 100;
     const earningsYield = (eps / currentPrice) * 100;
     const payoutRatio = (dividend / eps) * 100;
 
-    // ROE Assessment with detailed rules
+    // NEW: Compare ROE vs Required Return
+    const roe_vs_r = roe / 100 - requiredReturn;
+
     const roeAssessment = roe > 100 ?
       { text: `Verify Data ❗ ROE >100% often indicates incorrect Book Value input or negative equity. Investigate immediately.`, color: 'text-amber-600' } :
       roe >= 20 ?
@@ -383,7 +408,6 @@ export default function BuffettAnalysis() {
       { text: `Acceptable ⚠️ Average company. Not bad, but not exceptional.`, color: 'text-yellow-600' } :
       { text: `Poor ❌ Not generating good returns on capital. Likely no moat or operational issues.`, color: 'text-red-600' };
 
-    // Earnings Yield Assessment compared to user-provided 10-Year Treasury
     let earningsYieldAssessment;
     if (!isNaN(tenYearYield)) {
       if (earningsYield > tenYearYield) {
@@ -409,7 +433,6 @@ export default function BuffettAnalysis() {
       };
     }
 
-    // Payout Ratio Assessment with detailed rules
     const payoutRatioAssessment = dividend === 0 ?
       { text: `N/A ➖ No dividend. Company reinvests all earnings. Not good or bad.`, color: 'text-slate-600' } :
       payoutRatio > 100 ?
@@ -422,17 +445,42 @@ export default function BuffettAnalysis() {
       { text: `Safe ✅ 35-60% - Dividend likely secure.`, color: 'text-green-600' } :
       { text: `Very Safe ✅ <35% - Ample room to maintain and grow dividend, even in downturns.`, color: 'text-green-700' };
 
+    // NEW: ROE vs Required Return Assessment
+    let roeVsRAssessment;
+    if (roe_vs_r > 0.05) {
+      roeVsRAssessment = {
+        text: `Excellent ✅ ROE (${roe.toFixed(1)}%) significantly exceeds required return (${(requiredReturn * 100).toFixed(1)}%). Company creates substantial value.`,
+        color: 'text-green-700'
+      };
+    } else if (roe_vs_r > 0) {
+      roeVsRAssessment = {
+        text: `Good ✅ ROE (${roe.toFixed(1)}%) exceeds required return (${(requiredReturn * 100).toFixed(1)}%). Company creates value.`,
+        color: 'text-green-600'
+      };
+    } else if (roe_vs_r > -0.02) {
+      roeVsRAssessment = {
+        text: `Neutral ⚠️ ROE (${roe.toFixed(1)}%) ≈ required return (${(requiredReturn * 100).toFixed(1)}%). No value creation.`,
+        color: 'text-yellow-600'
+      };
+    } else {
+      roeVsRAssessment = {
+        text: `Destructive ❌ ROE (${roe.toFixed(1)}%) < required return (${(requiredReturn * 100).toFixed(1)}%). Destroying shareholder value.`,
+        color: 'text-red-600'
+      };
+    }
+
     return {
       roe: { value: roe.toFixed(1) + '%', assessment: roeAssessment },
       earningsYield: { value: earningsYield.toFixed(1) + '%', assessment: earningsYieldAssessment },
-      payoutRatio: { value: payoutRatio.toFixed(0) + '%', assessment: payoutRatioAssessment }
+      payoutRatio: { value: payoutRatio.toFixed(0) + '%', assessment: payoutRatioAssessment },
+      roeVsR: { value: roe.toFixed(1) + '% vs ' + (requiredReturn * 100).toFixed(1) + '%', assessment: roeVsRAssessment }
     };
   };
 
   const handleManualCalculation = () => {
     const {
         currentPrice, eps, dividendAnnual, epsGrowthRate, dividendGrowthRate,
-        conservativePE, maxPE, avgPE
+        conservativePE, maxPE, avgPE, requiredReturn, tenYearYield
     } = manualData;
 
     const price = parseFloat(currentPrice);
@@ -440,6 +488,7 @@ export default function BuffettAnalysis() {
     const currentDiv = parseFloat(dividendAnnual);
     const epsGrowth = parseFloat(epsGrowthRate);
     const divGrowth = parseFloat(dividendGrowthRate);
+    const reqReturn = parseFloat(requiredReturn) / 100;
 
     if ([price, currentEPS, currentDiv, epsGrowth, divGrowth].some(isNaN)) {
         alert("Please ensure Price, EPS, Dividend, and Growth Rates are valid numbers.");
@@ -448,7 +497,6 @@ export default function BuffettAnalysis() {
 
     const scenarios = [];
 
-    // Base Case (Conservative P/E)
     const basePE = parseFloat(conservativePE);
     if (!isNaN(basePE)) {
       const baseResult = performBuffettCalculation(price, currentEPS, currentDiv, epsGrowth, divGrowth, basePE);
@@ -460,7 +508,6 @@ export default function BuffettAnalysis() {
       });
     }
 
-    // Scenario 1: Max P/E
     const maxPENum = parseFloat(maxPE);
     if (!isNaN(maxPENum)) {
       const maxResult = performBuffettCalculation(price, currentEPS, currentDiv, epsGrowth, divGrowth, maxPENum);
@@ -472,7 +519,6 @@ export default function BuffettAnalysis() {
       });
     }
 
-    // Scenario 2: Average P/E
     const avgPENum = parseFloat(avgPE);
     if (!isNaN(avgPENum)) {
       const avgResult = performBuffettCalculation(price, currentEPS, currentDiv, epsGrowth, divGrowth, avgPENum);
@@ -486,9 +532,38 @@ export default function BuffettAnalysis() {
 
     setAnalysisResult(scenarios);
 
-    // Calculate business quality metrics
     const quality = calculateBusinessQuality();
     setBusinessQuality(quality);
+
+    // NEW: Calculate Advanced Results (PVGO, GGM, Implied Growth)
+    const stockPrice = price;
+    const dividend = currentDiv;
+    const growthRate = epsGrowth / 100;
+    const requiredReturnDecimal = reqReturn;
+    const epsValue = currentEPS;
+
+    // PVGO Calculation
+    const pvgoResults = calculatePVGO(stockPrice, epsValue, requiredReturnDecimal);
+
+    // Gordon Growth Model
+    const ggmValue = calculateGordonGrowth(dividend, requiredReturnDecimal, growthRate);
+
+    // Implied Growth Rate from Current Price
+    const impliedGrowth = calculateImpliedGrowth(stockPrice, dividend, requiredReturnDecimal);
+
+    // Compare current price to GGM value
+    const isOvervalued = ggmValue !== null && stockPrice > ggmValue * 1.1;
+
+    setAdvancedResults({
+      pvgo: pvgoResults,
+      ggmValue: ggmValue,
+      impliedGrowth: impliedGrowth,
+      isOvervalued: isOvervalued,
+      growthRateUsed: growthRate,
+      requiredReturnUsed: requiredReturnDecimal,
+      dividendUsed: dividend,
+      epsUsed: epsValue
+    });
   };
 
   const handleFocus = (fieldName) => {
@@ -533,7 +608,6 @@ export default function BuffettAnalysis() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-6">
-                {/* Stock Search */}
                 <div>
                   <Label>Find Stock</Label>
                   <StockSearch
@@ -547,7 +621,6 @@ export default function BuffettAnalysis() {
                   )}
                 </div>
 
-                {/* Enhanced Data Source Display */}
                 {(dataSource.quote || dataSource.growth || dataSource.pe) && (
                     <Alert className={dataSource.quote && dataSource.quote.includes('Failed') ? 'border-red-200 bg-red-50' : 'text-xs'}>
                         <Info className={`h-4 w-4 ${dataSource.quote && dataSource.quote.includes('Failed') ? 'text-red-600' : ''}`} />
@@ -562,7 +635,6 @@ export default function BuffettAnalysis() {
                     </Alert>
                 )}
 
-                {/* Manual Stock Symbol & Price */}
                 <div className="space-y-4 p-4 border rounded-lg bg-slate-50">
                     <h4 className="font-semibold text-slate-800">Stock Information</h4>
                     <div className="grid grid-cols-2 gap-4">
@@ -578,7 +650,6 @@ export default function BuffettAnalysis() {
                     {manualData.companyName && <p className="text-sm text-slate-500">{manualData.companyName}</p>}
                 </div>
 
-                {/* Core Manual Inputs */}
                 <div className="space-y-4 p-4 border rounded-lg bg-slate-50">
                     <h4 className="font-semibold text-slate-800">Key Metrics</h4>
                     <div className="grid grid-cols-2 gap-4">
@@ -591,8 +662,8 @@ export default function BuffettAnalysis() {
                             <Input id="dividendAnnual" type="number" step="0.01" placeholder="0.96" value={manualData.dividendAnnual} onChange={handleInputChange} onFocus={() => handleFocus('dividendAnnual')}/>
                         </div>
                         <div>
-                            <Label htmlFor="bookValuePerShare">Book Value per Share ($)</Label>
-                            <Input id="bookValuePerShare" type="number" step="0.01" placeholder="4.80" value={manualData.bookValuePerShare} onChange={handleInputChange} onFocus={() => handleFocus('bookValuePerShare')}/>
+                            <Label htmlFor="bookValuePerSquare">Book Value per Share ($)</Label>
+                            <Input id="bookValuePerSquare" type="number" step="0.01" placeholder="4.80" value={manualData.bookValuePerSquare} onChange={handleInputChange} onFocus={() => handleFocus('bookValuePerSquare')}/>
                         </div>
                         <div>
                             <div className="flex items-center gap-2">
@@ -608,10 +679,23 @@ export default function BuffettAnalysis() {
                             </div>
                             <Input id="tenYearYield" type="number" step="0.1" placeholder="4.5" value={manualData.tenYearYield} onChange={handleInputChange}/>
                         </div>
+                        <div className="col-span-2">
+                            <div className="flex items-center gap-2">
+                                <Label htmlFor="requiredReturn">Required Return / Cost of Equity (%)</Label>
+                                <Tooltip>
+                                    <TooltipTrigger asChild>
+                                        <Info className="w-3 h-3 text-slate-400" />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                        <p>Minimum return investors expect. Often uses 10-Yr Treasury + equity risk premium (~4-6%). Used for PVGO and GGM calculations.</p>
+                                    </TooltipContent>
+                                </Tooltip>
+                            </div>
+                            <Input id="requiredReturn" type="number" step="0.1" placeholder="8.0" value={manualData.requiredReturn} onChange={handleInputChange}/>
+                        </div>
                     </div>
                 </div>
 
-                {/* Growth Assumptions */}
                 <div className="space-y-4 p-4 border rounded-lg bg-slate-50">
                     <h4 className="font-semibold text-slate-800">Growth Assumptions</h4>
                     <div className="space-y-4">
@@ -662,7 +746,6 @@ export default function BuffettAnalysis() {
                     </div>
                 </div>
 
-                {/* P/E Scenarios */}
                 <div className="space-y-4 p-4 border rounded-lg bg-slate-50">
                     <h4 className="font-semibold text-slate-800">Future P/E Scenarios</h4>
                     <div className="grid grid-cols-1 gap-4">
@@ -723,7 +806,7 @@ export default function BuffettAnalysis() {
                         <tbody>
                           <BusinessQualityRow
                             metric="Return on Equity (ROE)"
-                            calculation={`(${manualData.eps} / ${manualData.bookValuePerShare}) × 100`}
+                            calculation={`(${manualData.eps} / ${manualData.bookValuePerSquare}) × 100`}
                             value={businessQuality.roe.value}
                             assessment={businessQuality.roe.assessment.text}
                             color={businessQuality.roe.assessment.color}
@@ -742,6 +825,13 @@ export default function BuffettAnalysis() {
                             assessment={businessQuality.payoutRatio.assessment.text}
                             color={businessQuality.payoutRatio.assessment.color}
                           />
+                          <BusinessQualityRow
+                            metric="ROE vs Required Return"
+                            calculation={`ROE vs r`}
+                            value={businessQuality.roeVsR.value}
+                            assessment={businessQuality.roeVsR.assessment.text}
+                            color={businessQuality.roeVsR.assessment.color}
+                          />
                         </tbody>
                       </table>
                     </div>
@@ -755,7 +845,191 @@ export default function BuffettAnalysis() {
                 </Card>
               )}
 
-              {!analysisResult && !businessQuality && (
+              {/* NEW: Advanced Valuation Tabs (PVGO, GGM, etc.) */}
+              {advancedResults && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <BarChart className="w-5 h-5 text-blue-600" />
+                      Advanced Valuation Analysis
+                    </CardTitle>
+                    <p className="text-sm text-slate-600">PVGO, Gordon Growth Model, and more</p>
+                  </CardHeader>
+                  <CardContent>
+                    <Tabs defaultValue="pvgo" className="w-full">
+                      <TabsList className="grid w-full grid-cols-3">
+                        <TabsTrigger value="pvgo">
+                          <PieChart className="w-4 h-4 mr-2" />
+                          PVGO
+                        </TabsTrigger>
+                        <TabsTrigger value="ggm">
+                          <Percent className="w-4 h-4 mr-2" />
+                          Gordon Growth
+                        </TabsTrigger>
+                        <TabsTrigger value="comparison">
+                          <LineChart className="w-4 h-4 mr-2" />
+                          Comparison
+                        </TabsTrigger>
+                      </TabsList>
+
+                      {/* PVGO Tab */}
+                      <TabsContent value="pvgo" className="space-y-4 pt-4">
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-blue-50 p-4 rounded-lg">
+                            <p className="text-xs text-blue-600">No-Growth Value</p>
+                            <p className="text-xl font-bold text-blue-700">
+                              ${advancedResults.pvgo.noGrowthValue.toFixed(2)}
+                            </p>
+                            <p className="text-xs text-blue-500">EPS / Required Return</p>
+                          </div>
+                          <div className="bg-purple-50 p-4 rounded-lg">
+                            <p className="text-xs text-purple-600">PVGO (Growth Value)</p>
+                            <p className="text-xl font-bold text-purple-700">
+                              ${advancedResults.pvgo.pvgo.toFixed(2)}
+                            </p>
+                            <p className="text-xs text-purple-500">
+                              {advancedResults.pvgo.pvgoPercent.toFixed(1)}% of current price
+                            </p>
+                          </div>
+                        </div>
+                        <div className="bg-slate-50 p-4 rounded-lg">
+                          <p className="text-sm text-slate-600">What this means:</p>
+                          <div className="mt-2 text-sm">
+                            <div className="flex justify-between border-b py-1">
+                              <span className="text-slate-500">Current Price:</span>
+                              <span className="font-medium">${parseFloat(manualData.currentPrice).toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between border-b py-1">
+                              <span className="text-slate-500">From Current Assets:</span>
+                              <span className="font-medium">${advancedResults.pvgo.noGrowthValue.toFixed(2)}</span>
+                            </div>
+                            <div className="flex justify-between py-1 font-semibold">
+                              <span className="text-slate-500">From Future Growth (PVGO):</span>
+                              <span className="text-purple-600">${advancedResults.pvgo.pvgo.toFixed(2)}</span>
+                            </div>
+                          </div>
+                          {advancedResults.pvgo.pvgoPercent > 50 ? (
+                            <Alert className="mt-3 border-blue-200 bg-blue-50">
+                              <AlertTriangle className="h-4 w-4 text-blue-600" />
+                              <AlertDescription className="text-blue-800">
+                                Most of the price comes from <strong>growth expectations</strong> ({advancedResults.pvgo.pvgoPercent.toFixed(1)}%). 
+                                Ensure growth assumptions are realistic.
+                              </AlertDescription>
+                            </Alert>
+                          ) : (
+                            <Alert className="mt-3 border-green-200 bg-green-50">
+                              <CheckCircle className="h-4 w-4 text-green-600" />
+                              <AlertDescription className="text-green-800">
+                                Price is primarily driven by <strong>current earnings</strong>. 
+                                Less dependent on uncertain growth forecasts.
+                              </AlertDescription>
+                            </Alert>
+                          )}
+                        </div>
+                      </TabsContent>
+
+                      {/* GGM Tab */}
+                      <TabsContent value="ggm" className="space-y-4 pt-4">
+                        {advancedResults.ggmValue !== null ? (
+                          <>
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-green-50 p-4 rounded-lg">
+                                <p className="text-xs text-green-600">GGM Intrinsic Value</p>
+                                <p className="text-xl font-bold text-green-700">
+                                  ${advancedResults.ggmValue.toFixed(2)}
+                                </p>
+                                <p className="text-xs text-green-500">D₁ / (r - g)</p>
+                              </div>
+                              <div className="bg-slate-50 p-4 rounded-lg">
+                                <p className="text-xs text-slate-600">Current Price</p>
+                                <p className="text-xl font-bold text-slate-700">
+                                  ${parseFloat(manualData.currentPrice).toFixed(2)}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 text-sm">
+                              <div className="bg-slate-50 p-2 rounded text-center">
+                                <p className="text-xs text-slate-500">Dividend (D₁)</p>
+                                <p className="font-semibold">${advancedResults.dividendUsed.toFixed(2)}</p>
+                              </div>
+                              <div className="bg-slate-50 p-2 rounded text-center">
+                                <p className="text-xs text-slate-500">Required Return (r)</p>
+                                <p className="font-semibold">{(advancedResults.requiredReturnUsed * 100).toFixed(1)}%</p>
+                              </div>
+                              <div className="bg-slate-50 p-2 rounded text-center">
+                                <p className="text-xs text-slate-500">Growth Rate (g)</p>
+                                <p className="font-semibold">{(advancedResults.growthRateUsed * 100).toFixed(1)}%</p>
+                              </div>
+                            </div>
+                            {advancedResults.isOvervalued ? (
+                              <Alert className="border-red-200 bg-red-50">
+                                <AlertTriangle className="h-4 w-4 text-red-600" />
+                                <AlertTitle className="text-red-800">Overvalued by GGM</AlertTitle>
+                                <AlertDescription className="text-red-700">
+                                  Current price (${parseFloat(manualData.currentPrice).toFixed(2)}) exceeds GGM value (${advancedResults.ggmValue.toFixed(2)}) by {((parseFloat(manualData.currentPrice) / advancedResults.ggmValue - 1) * 100).toFixed(0)}%.
+                                </AlertDescription>
+                              </Alert>
+                            ) : (
+                              <Alert className="border-green-200 bg-green-50">
+                                <CheckCircle className="h-4 w-4 text-green-600" />
+                                <AlertDescription className="text-green-800">
+                                  Current price is at or below GGM value. May be undervalued.
+                                </AlertDescription>
+                              </Alert>
+                            )}
+                          </>
+                        ) : (
+                          <Alert>
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertDescription>
+                              GGM requires growth rate ({advancedResults.growthRateUsed * 100}%) to be less than required return ({(advancedResults.requiredReturnUsed * 100)}%).
+                              Adjust assumptions or use a different model.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </TabsContent>
+
+                      {/* Comparison Tab */}
+                      <TabsContent value="comparison" className="space-y-4 pt-4">
+                        <div className="space-y-3">
+                          <div className="flex justify-between items-center border-b pb-2">
+                            <span className="text-slate-600">Current Price</span>
+                            <span className="font-bold text-red-600">${parseFloat(manualData.currentPrice).toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center border-b pb-2">
+                            <span className="text-slate-600">GGM Value</span>
+                            <span className={`font-bold ${advancedResults.ggmValue !== null ? 'text-green-600' : 'text-slate-400'}`}>
+                              {advancedResults.ggmValue !== null ? `$${advancedResults.ggmValue.toFixed(2)}` : 'N/A'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between items-center border-b pb-2">
+                            <span className="text-slate-600">No-Growth Value</span>
+                            <span className="font-bold text-blue-600">${advancedResults.pvgo.noGrowthValue.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center border-b pb-2">
+                            <span className="text-slate-600">PVGO (Growth Premium)</span>
+                            <span className="font-bold text-purple-600">${advancedResults.pvgo.pvgo.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center pt-2">
+                            <span className="text-slate-600">Implied Growth Rate</span>
+                            <span className="font-bold text-amber-600">{(advancedResults.impliedGrowth * 100).toFixed(2)}%</span>
+                          </div>
+                        </div>
+                        <Alert className="mt-2 bg-slate-50">
+                          <Info className="h-4 w-4" />
+                          <AlertDescription className="text-xs text-slate-600">
+                            <strong>Implied Growth:</strong> The growth rate the market is pricing in. 
+                            If it's much higher than your estimated growth ({advancedResults.growthRateUsed * 100}%), 
+                            the stock may be overvalued.
+                          </AlertDescription>
+                        </Alert>
+                      </TabsContent>
+                    </Tabs>
+                  </CardContent>
+                </Card>
+              )}
+
+              {!analysisResult && !businessQuality && !advancedResults && (
                 <Card className="flex items-center justify-center h-96">
                   <div className="text-center text-slate-500">
                     <Target className="w-12 h-12 mx-auto mb-4"/>

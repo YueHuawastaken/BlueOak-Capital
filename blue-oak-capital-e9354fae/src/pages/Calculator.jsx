@@ -1,14 +1,14 @@
-
+// src/pages/Calculator.jsx
 import React, { useState, useEffect } from "react";
-// import { ValuationAnalysis } from "@/api/entities";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import StockSearch from "../components/search/StockSearch";
 import CleanStockDataService from "../components/services/CleanStockDataService";
 import { 
@@ -26,7 +26,12 @@ import {
   Target,
   Building2,
   TrendingDown,
-  Undo
+  Undo,
+  PieChart,
+  Percent,
+  LineChart,
+  BarChart,
+  Table as TableIcon
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { createPageUrl } from "@/utils";
@@ -37,35 +42,50 @@ const COMPANY_PROFILES = {
     description: "e.g., Apple, Coca-Cola, Procter & Gamble",
     growthRange: [2, 4],
     defaultGrowth: 3,
-    examples: "Large, established companies with stable, predictable cash flows"
+    examples: "Large, established companies with stable, predictable cash flows",
+    peMultiplier: 15,
+    pbMultiplier: 3,
+    psMultiplier: 2
   },
   growth_company: {
     label: "Growth Company (Moderate Growth)", 
     description: "e.g., Adobe, Nike, Costco",
     growthRange: [4, 7],
     defaultGrowth: 5.5,
-    examples: "Established companies with strong competitive advantages and expansion opportunities"
+    examples: "Established companies with strong competitive advantages and expansion opportunities",
+    peMultiplier: 25,
+    pbMultiplier: 5,
+    psMultiplier: 3
   },
   high_growth: {
     label: "High-Growth Company",
     description: "e.g., Snowflake, Uber, promising biotech",
     growthRange: [7, 12],
     defaultGrowth: 9,
-    examples: "Companies in rapid expansion phase with significant market opportunities"
+    examples: "Companies in rapid expansion phase with significant market opportunities",
+    peMultiplier: 40,
+    pbMultiplier: 8,
+    psMultiplier: 5
   },
   cyclical: {
     label: "Cyclical Company",
     description: "e.g., Ford, Boeing, Caterpillar", 
     growthRange: [1, 6],
     defaultGrowth: 3.5,
-    examples: "Companies whose performance fluctuates with economic cycles"
+    examples: "Companies whose performance fluctuates with economic cycles",
+    peMultiplier: 12,
+    pbMultiplier: 2,
+    psMultiplier: 1.5
   },
   custom: {
     label: "Custom",
     description: "Enter your own assumptions",
     growthRange: [0, 20],
     defaultGrowth: 5,
-    examples: "For experienced users who want full control over assumptions"
+    examples: "For experienced users who want full control over assumptions",
+    peMultiplier: 20,
+    pbMultiplier: 4,
+    psMultiplier: 2.5
   }
 };
 
@@ -87,7 +107,6 @@ const initialFormState = {
 
 export default function Calculator() {
   const [formData, setFormData] = useState(initialFormState);
-
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [fetching, setFetching] = useState(false);
@@ -95,8 +114,150 @@ export default function Calculator() {
   const [yearlyProjections, setYearlyProjections] = useState([]);
   const [dataSource, setDataSource] = useState('');
   const [validationWarnings, setValidationWarnings] = useState([]);
+  const [advancedResults, setAdvancedResults] = useState(null);
+  const [activeTab, setActiveTab] = useState('valuation');
 
-  // Function to fetch stock data for pre-filling the calculator
+  // NEW: Calculate PVGO for DCF
+  const calculatePVGOForDCF = (intrinsicValue, eps, requiredReturn) => {
+    if (!eps || !requiredReturn || requiredReturn <= 0) return null;
+    const noGrowthValue = eps / (requiredReturn / 100);
+    const pvgo = intrinsicValue - noGrowthValue;
+    const pvgoPercent = intrinsicValue > 0 ? (pvgo / intrinsicValue) * 100 : 0;
+    return { 
+      noGrowthValue, 
+      pvgo, 
+      pvgoPercent,
+      valueFromAssets: noGrowthValue,
+      valueFromGrowth: pvgo
+    };
+  };
+
+  // NEW: Calculate implied growth from current price
+  const calculateImpliedGrowthDCF = (currentPrice, baseFCF, discountRate, terminalGrowth, years) => {
+    if (!currentPrice || !baseFCF || baseFCF <= 0) return null;
+    
+    let lowGrowth = 0.001;
+    let highGrowth = 0.25;
+    const discount = discountRate / 100;
+    const tg = terminalGrowth / 100;
+    
+    const calculateDCFValue = (growthRate) => {
+      let presentValue = 0;
+      for (let year = 1; year <= years; year++) {
+        const projectedFCF = baseFCF * Math.pow(1 + growthRate, year);
+        presentValue += projectedFCF / Math.pow(1 + discount, year);
+      }
+      const finalYearFCF = baseFCF * Math.pow(1 + growthRate, years);
+      const terminalValue = (finalYearFCF * (1 + tg)) / (discount - tg);
+      const presentValueOfTerminal = terminalValue / Math.pow(1 + discount, years);
+      return presentValue + presentValueOfTerminal;
+    };
+
+    try {
+      for (let i = 0; i < 50; i++) {
+        const midGrowth = (lowGrowth + highGrowth) / 2;
+        const value = calculateDCFValue(midGrowth);
+        if (value < currentPrice) {
+          lowGrowth = midGrowth;
+        } else {
+          highGrowth = midGrowth;
+        }
+      }
+      return (lowGrowth + highGrowth) / 2;
+    } catch (error) {
+      return null;
+    }
+  };
+
+  // NEW: Generate Sensitivity Matrix
+  const generateSensitivityMatrix = (baseFCF, baseGrowth, baseDiscount, terminalGrowth, years) => {
+    if (!baseFCF || baseFCF <= 0) return null;
+    
+    const growthVariations = [-2, -1, 0, 1, 2];
+    const discountVariations = [-1, -0.5, 0, 0.5, 1];
+    const matrix = [];
+    
+    const calculateValue = (growth, discount) => {
+      const g = growth / 100;
+      const d = discount / 100;
+      const tg = terminalGrowth / 100;
+      let presentValue = 0;
+      for (let year = 1; year <= years; year++) {
+        const projectedFCF = baseFCF * Math.pow(1 + g, year);
+        presentValue += projectedFCF / Math.pow(1 + d, year);
+      }
+      const finalYearFCF = baseFCF * Math.pow(1 + g, years);
+      const terminalValue = (finalYearFCF * (1 + tg)) / (d - tg);
+      const presentValueOfTerminal = terminalValue / Math.pow(1 + d, years);
+      return presentValue + presentValueOfTerminal;
+    };
+
+    for (const gVar of growthVariations) {
+      const row = [];
+      for (const dVar of discountVariations) {
+        const growth = baseGrowth + gVar;
+        const discount = baseDiscount + dVar;
+        const value = calculateValue(growth, discount);
+        row.push({ growth, discount, value });
+      }
+      matrix.push(row);
+    }
+    return matrix;
+  };
+
+  // NEW: Calculate Terminal Value Sensitivity
+  const calculateTerminalValueSensitivity = (baseFCF, growth, discount, terminalGrowth, years) => {
+    if (!baseFCF || baseFCF <= 0) return null;
+    
+    const sensitivities = [];
+    const terminalGrowths = [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0];
+    const g = growth / 100;
+    const d = discount / 100;
+    const baseTV = (baseFCF * Math.pow(1 + g, years) * (1 + terminalGrowth / 100)) / (d - terminalGrowth / 100);
+    const basePVTV = baseTV / Math.pow(1 + d, years);
+    
+    for (const tg of terminalGrowths) {
+      const tgDecimal = tg / 100;
+      const tv = (baseFCF * Math.pow(1 + g, years) * (1 + tgDecimal)) / (d - tgDecimal);
+      const pvTv = tv / Math.pow(1 + d, years);
+      const percentOfBase = ((pvTv / basePVTV) * 100).toFixed(1);
+      sensitivities.push({ 
+        terminalGrowth: tg, 
+        terminalValue: tv, 
+        presentValue: pvTv,
+        percentOfBase: parseFloat(percentOfBase)
+      });
+    }
+    return sensitivities;
+  };
+
+  // NEW: Peer Comparison
+  const getPeerComparison = (currentPrice, eps, companyProfile, intrinsicValue) => {
+    if (!eps || eps <= 0) return null;
+    
+    const profile = COMPANY_PROFILES[companyProfile] || COMPANY_PROFILES.custom;
+    const peRatio = currentPrice / eps;
+    
+    return {
+      currentPE: peRatio,
+      industryPE: profile.peMultiplier,
+      peComparison: peRatio > profile.peMultiplier * 1.1 ? 'Above industry average' :
+                    peRatio < profile.peMultiplier * 0.9 ? 'Below industry average' : 'In line with industry',
+      pbMultiplier: profile.pbMultiplier,
+      psMultiplier: profile.psMultiplier,
+      fairValueEstimate: eps * profile.peMultiplier
+    };
+  };
+
+  // NEW: Calculate WACC-like discount rate with spot rates
+  const calculateDiscountRateWithRf = (rfRate, beta, marketRiskPremium) => {
+    // CAPM: r = rf + beta * (rm - rf)
+    const rf = parseFloat(rfRate) / 100 || 0.045;
+    const betaValue = beta || 1.0;
+    const mrp = marketRiskPremium || 0.06; // 6% default equity risk premium
+    return (rf + betaValue * mrp) * 100;
+  };
+
   const fetchStockForCalculator = async (symbol) => {
     setFetching(true);
     try {
@@ -109,7 +270,6 @@ export default function Calculator() {
       let discountRate = '8';
       let companyName = '';
 
-      // Try FMP first
       try {
         const fmpData = await CleanStockDataService.getFmpQuote(symbol);
         if (fmpData) {
@@ -117,7 +277,6 @@ export default function Calculator() {
           eps = fmpData.eps?.toString() || eps;
         }
 
-        // Get FCF and shares from FMP cash flow statement
         const cashFlowResponse = await fetch(
           `${CleanStockDataService.fmpUrl}/cash-flow-statement/${symbol}?period=annual&limit=1&apikey=${CleanStockDataService.fmpApiKey}`
         );
@@ -131,7 +290,6 @@ export default function Calculator() {
           sharesOutstanding = latestCashFlow.weightedAverageShsOutstanding ? (latestCashFlow.weightedAverageShsOutstanding / 1000000).toFixed(0) : sharesOutstanding;
         }
 
-        // Get historical growth rate
         const historicals = await CleanStockDataService.getHistoricalAnalysisData(symbol);
         if (historicals && historicals.historical_eps_growth) {
           growthRate = historicals.historical_eps_growth.toFixed(1);
@@ -140,8 +298,6 @@ export default function Calculator() {
         setDataSource('FMP');
       } catch (fmpError) {
         console.warn('FMP failed, trying Finnhub:', fmpError);
-        
-        // Fallback to Finnhub
         try {
           const finnhubData = await CleanStockDataService.getStock(symbol);
           if (finnhubData) {
@@ -159,7 +315,6 @@ export default function Calculator() {
         companyName = `${symbol} Corporation`;
       }
 
-      // Calculate FCF per share if we have both values
       let fcfPerShare = fetchErrorMsg;
       if (totalFCF !== fetchErrorMsg && sharesOutstanding !== fetchErrorMsg) {
         const totalFCFNum = parseFloat(totalFCF) * 1000000;
@@ -191,7 +346,6 @@ export default function Calculator() {
     }
   };
 
-  // Pre-fill form if symbol is provided in URL
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const symbol = urlParams.get('symbol');
@@ -207,7 +361,6 @@ export default function Calculator() {
       [field]: value
     }));
 
-    // Handle company profile changes
     if (field === 'company_profile' && value !== 'custom') {
       const profile = COMPANY_PROFILES[value];
       setFormData(prev => ({
@@ -216,7 +369,6 @@ export default function Calculator() {
       }));
     }
 
-    // Recalculate FCF per share if total FCF or shares outstanding changes
     if (field === 'total_fcf' || field === 'shares_outstanding') {
       const totalFCF = field === 'total_fcf' ? parseFloat(value) : parseFloat(formData.total_fcf);
       const shares = field === 'shares_outstanding' ? parseFloat(value) : parseFloat(formData.shares_outstanding);
@@ -230,7 +382,6 @@ export default function Calculator() {
       }
     }
 
-    // Validate inputs
     validateInputs({ ...formData, [field]: value });
   };
 
@@ -241,6 +392,7 @@ export default function Calculator() {
     setDataSource('');
     setValidationWarnings([]);
     setInitialSearchQuery('');
+    setAdvancedResults(null);
   };
 
   const validateInputs = (data) => {
@@ -250,7 +402,6 @@ export default function Calculator() {
     const discountRate = parseFloat(data.discount_rate);
     const terminalGrowth = parseFloat(data.terminal_growth_rate);
 
-    // Growth rate validation based on company profile
     if (!isNaN(growthRate) && data.company_profile !== 'custom') {
       const [minGrowth, maxGrowth] = profile.growthRange;
       if (growthRate < minGrowth || growthRate > maxGrowth) {
@@ -258,7 +409,6 @@ export default function Calculator() {
       }
     }
 
-    // Terminal growth validation
     if (!isNaN(terminalGrowth) && !isNaN(discountRate)) {
       if (terminalGrowth >= discountRate) {
         warnings.push('Critical Error: Terminal Growth Rate must be less than Discount Rate, otherwise the model breaks (terminal value goes to infinity).');
@@ -283,7 +433,6 @@ export default function Calculator() {
     const terminalGrowthRate = parseFloat(formData.terminal_growth_rate) / 100;
     const years = parseInt(formData.projection_years);
 
-    // Validation
     if (isNaN(currentFCF) || currentFCF <= 0) {
       throw new Error('FCF per share must be a positive number. Consider using the Buffett Analysis for negative FCF companies.');
     }
@@ -310,7 +459,6 @@ export default function Calculator() {
         });
       }
 
-      // Terminal value calculation
       const finalYearFCF = currentFCF * Math.pow(1 + growthRate, years);
       const terminalValue = (finalYearFCF * (1 + terminalGrowthRate)) / (discountRate - terminalGrowthRate);
       const presentValueOfTerminal = terminalValue / Math.pow(1 + discountRate, years);
@@ -329,15 +477,14 @@ export default function Calculator() {
       };
     };
 
-    // Calculate three scenarios
     const baseCase = calculateScenario(baseGrowthRate, baseDiscountRate);
     const conservativeCase = calculateScenario(
-      Math.max(0.01, baseGrowthRate - 0.02), // 2% lower growth, min 1%
-      baseDiscountRate + 0.01 // 1% higher discount rate
+      Math.max(0.01, baseGrowthRate - 0.02),
+      baseDiscountRate + 0.01
     );
     const optimisticCase = calculateScenario(
-      baseGrowthRate + 0.02, // 2% higher growth
-      Math.max(0.05, baseDiscountRate - 0.005) // 0.5% lower discount rate, min 5%
+      baseGrowthRate + 0.02,
+      Math.max(0.05, baseDiscountRate - 0.005)
     );
 
     setYearlyProjections(baseCase.projections);
@@ -370,6 +517,7 @@ export default function Calculator() {
   const handleCalculate = async () => {
     setLoading(true);
     setResult(null);
+    setAdvancedResults(null);
     
     try {
       if (!formData.current_price || formData.current_price.trim() === '' || formData.current_price === "Couldn't fetch data, Manual Input") {
@@ -385,6 +533,64 @@ export default function Calculator() {
       const recommendationData = getRecommendation(currentPrice, scenarioResults.valuationRange);
 
       const companyName = formData.company_name || `${formData.symbol} Corporation`;
+
+      // --- NEW: Calculate Advanced Analytics ---
+      
+      // 1. PVGO
+      const eps = parseFloat(formData.eps);
+      const discountRate = parseFloat(formData.discount_rate);
+      const pvgoResults = calculatePVGOForDCF(
+        scenarioResults.baseCase.intrinsicValue, 
+        eps, 
+        discountRate
+      );
+
+      // 2. Implied Growth
+      const baseFCF = parseFloat(formData.fcf_per_share);
+      const growthRate = parseFloat(formData.growth_rate);
+      const terminalGrowth = parseFloat(formData.terminal_growth_rate);
+      const projectionYears = parseInt(formData.projection_years);
+      const impliedGrowth = calculateImpliedGrowthDCF(
+        currentPrice, 
+        baseFCF, 
+        discountRate, 
+        terminalGrowth, 
+        projectionYears
+      );
+
+      // 3. Sensitivity Matrix
+      const sensitivityMatrix = generateSensitivityMatrix(
+        baseFCF, 
+        growthRate, 
+        discountRate, 
+        terminalGrowth, 
+        projectionYears
+      );
+
+      // 4. Terminal Value Sensitivity
+      const tvSensitivity = calculateTerminalValueSensitivity(
+        baseFCF, 
+        growthRate, 
+        discountRate, 
+        terminalGrowth, 
+        projectionYears
+      );
+
+      // 5. Peer Comparison
+      const peerComparison = getPeerComparison(
+        currentPrice, 
+        eps, 
+        formData.company_profile,
+        scenarioResults.baseCase.intrinsicValue
+      );
+
+      // 6. Discount Rate Components
+      const discountRateComponents = {
+        riskFreeRate: 4.5, // 10-year Treasury
+        equityRiskPremium: 5.5,
+        beta: 1.0,
+        calculatedRate: 10.0
+      };
 
       const analysisData = {
         symbol: formData.symbol,
@@ -404,11 +610,24 @@ export default function Calculator() {
         scenarios: scenarioResults,
         company_profile: formData.company_profile,
         data_source: dataSource,
-        analysis_notes: formData.analysis_notes
+        analysis_notes: formData.analysis_notes,
+        // New fields
+        pvgo: pvgoResults,
+        impliedGrowth: impliedGrowth,
+        sensitivityMatrix: sensitivityMatrix,
+        tvSensitivity: tvSensitivity,
+        peerComparison: peerComparison,
+        discountRateComponents: discountRateComponents
       };
 
-      // await ValuationAnalysis.create(analysisData);
       setResult(analysisData);
+      setAdvancedResults({
+        pvgo: pvgoResults,
+        impliedGrowth: impliedGrowth,
+        sensitivityMatrix: sensitivityMatrix,
+        tvSensitivity: tvSensitivity,
+        peerComparison: peerComparison
+      });
     } catch (error) {
       console.error('Error calculating intrinsic value:', error);
       alert(`Calculation error: ${error.message}`);
@@ -446,6 +665,10 @@ export default function Calculator() {
         terminal_growth_rate: result.terminal_growth_rate + '%',
         projection_years: formData.projection_years
       },
+      // New fields
+      pvgo: result.pvgo,
+      implied_growth: result.impliedGrowth ? (result.impliedGrowth * 100).toFixed(2) + '%' : 'N/A',
+      peer_comparison: result.peerComparison,
       data_source: result.data_source
     };
 
@@ -480,7 +703,6 @@ export default function Calculator() {
     <TooltipProvider>
       <div className="p-4 lg:p-8 bg-slate-50 min-h-screen">
         <div className="max-w-5xl mx-auto space-y-8">
-          {/* Header */}
           <div className="text-center">
             <div className="flex justify-center mb-4">
               <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl flex items-center justify-center">
@@ -517,7 +739,6 @@ export default function Calculator() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-8">
-                {/* Stock Search */}
                 <div>
                   <Label>Find Stock</Label>
                   <StockSearch 
@@ -535,7 +756,6 @@ export default function Calculator() {
                   )}
                 </div>
 
-                {/* Company Profile Selection */}
                 <div className="bg-blue-50 rounded-lg p-4 border border-blue-200">
                   <Label className="text-base font-semibold">Company Profile & Growth Stage</Label>
                   <Select
@@ -564,7 +784,6 @@ export default function Calculator() {
                   )}
                 </div>
 
-                {/* Company Data Section */}
                 <div className="bg-slate-50 rounded-lg p-4 border">
                   <h3 className="text-base font-semibold text-slate-900 mb-4 flex items-center gap-2">
                     <Building2 className="w-4 h-4" />
@@ -572,7 +791,6 @@ export default function Calculator() {
                   </h3>
                   
                   <div className="space-y-4">
-                    {/* Display Symbol and Company Name */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <Label htmlFor="symbol">Stock Symbol *</Label>
@@ -660,7 +878,6 @@ export default function Calculator() {
                       />
                     </div>
 
-                    {/* FCF Calculation Details */}
                     {(formData.total_fcf || formData.shares_outstanding) && (
                       <div className="bg-blue-50 rounded-lg p-3 border border-blue-200">
                         <p className="text-sm font-medium text-blue-900 mb-2">FCF Calculation Details:</p>
@@ -702,7 +919,6 @@ export default function Calculator() {
                   </div>
                 </div>
 
-                {/* Forecast Assumptions Section */}
                 <div className="bg-green-50 rounded-lg p-4 border border-green-200">
                   <h3 className="text-base font-semibold text-slate-900 mb-4 flex items-center gap-2">
                     <Target className="w-4 h-4" />
@@ -746,7 +962,6 @@ export default function Calculator() {
                   </div>
                 </div>
 
-                {/* Risk Assumptions Section */}
                 <div className="bg-orange-50 rounded-lg p-4 border border-orange-200">
                   <h3 className="text-base font-semibold text-slate-900 mb-4 flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4" />
@@ -762,8 +977,7 @@ export default function Calculator() {
                             <Info className="w-4 h-4 text-slate-400" />
                           </TooltipTrigger>
                           <TooltipContent>
-        
-                          <p>Your required return. For stable companies, it's often 8-9%. For riskier companies, use 10-12% or more</p>
+                            <p>Your required return. For stable companies, it's often 8-9%. For riskier companies, use 10-12% or more</p>
                           </TooltipContent>
                         </Tooltip>
                       </div>
@@ -800,7 +1014,6 @@ export default function Calculator() {
                   </div>
                 </div>
 
-                {/* Validation Warnings */}
                 {validationWarnings.length > 0 && (
                   <div className="space-y-2">
                     {validationWarnings.map((warning, index) => (
@@ -878,7 +1091,6 @@ export default function Calculator() {
                         {result.company_name ? `${result.company_name} (${result.symbol})` : result.symbol} - Advanced DCF Analysis
                       </h3>
                       
-                      {/* Valuation Range Display */}
                       <div className="bg-gradient-to-r from-red-50 via-yellow-50 to-green-50 rounded-lg p-4 mb-4">
                         <p className="text-sm text-slate-600 mb-2">Intrinsic Value Range (Sensitivity Analysis)</p>
                         <div className="flex items-center justify-center space-x-4">
@@ -926,7 +1138,298 @@ export default function Calculator() {
                       </AlertDescription>
                     </Alert>
 
-                    {/* Scenario Comparison Table */}
+                    {/* NEW: Advanced Valuation Tabs */}
+                    {advancedResults && (
+                      <Card className="border-purple-200 bg-purple-50/30">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="text-base flex items-center gap-2">
+                            <BarChart className="w-4 h-4 text-purple-600" />
+                            Advanced Valuation Analysis
+                          </CardTitle>
+                          <p className="text-xs text-slate-500">PVGO, Implied Growth, Sensitivity Matrix, and Peer Comparison</p>
+                        </CardHeader>
+                        <CardContent>
+                          <Tabs defaultValue="pvgo" className="w-full">
+                            <TabsList className="grid w-full grid-cols-4">
+                              <TabsTrigger value="pvgo" className="text-xs">
+                                <PieChart className="w-3 h-3 mr-1" />
+                                PVGO
+                              </TabsTrigger>
+                              <TabsTrigger value="growth" className="text-xs">
+                                <Target className="w-3 h-3 mr-1" />
+                                Implied Growth
+                              </TabsTrigger>
+                              <TabsTrigger value="sensitivity" className="text-xs">
+                                <TableIcon className="w-3 h-3 mr-1" />
+                                Sensitivity
+                              </TabsTrigger>
+                              <TabsTrigger value="peers" className="text-xs">
+                                <Building2 className="w-3 h-3 mr-1" />
+                                Peers
+                              </TabsTrigger>
+                            </TabsList>
+
+                            {/* PVGO Tab */}
+                            <TabsContent value="pvgo" className="space-y-4 pt-4">
+                              {advancedResults.pvgo ? (
+                                <>
+                                  <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-blue-50 p-4 rounded-lg">
+                                      <p className="text-xs text-blue-600">No-Growth Value</p>
+                                      <p className="text-xl font-bold text-blue-700">
+                                        ${advancedResults.pvgo.noGrowthValue.toFixed(2)}
+                                      </p>
+                                      <p className="text-xs text-blue-500">EPS / Required Return</p>
+                                    </div>
+                                    <div className="bg-purple-50 p-4 rounded-lg">
+                                      <p className="text-xs text-purple-600">PVGO (Growth Value)</p>
+                                      <p className="text-xl font-bold text-purple-700">
+                                        ${advancedResults.pvgo.pvgo.toFixed(2)}
+                                      </p>
+                                      <p className="text-xs text-purple-500">
+                                        {advancedResults.pvgo.pvgoPercent.toFixed(1)}% of intrinsic value
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="bg-slate-50 p-4 rounded-lg">
+                                    <p className="text-sm text-slate-600">What this means:</p>
+                                    <div className="mt-2 text-sm">
+                                      <div className="flex justify-between border-b py-1">
+                                        <span className="text-slate-500">Intrinsic Value:</span>
+                                        <span className="font-medium">${result.intrinsic_value.toFixed(2)}</span>
+                                      </div>
+                                      <div className="flex justify-between border-b py-1">
+                                        <span className="text-slate-500">From Current Assets:</span>
+                                        <span className="font-medium">${advancedResults.pvgo.noGrowthValue.toFixed(2)}</span>
+                                      </div>
+                                      <div className="flex justify-between py-1 font-semibold">
+                                        <span className="text-slate-500">From Future Growth (PVGO):</span>
+                                        <span className="text-purple-600">${advancedResults.pvgo.pvgo.toFixed(2)}</span>
+                                      </div>
+                                    </div>
+                                    {advancedResults.pvgo.pvgoPercent > 50 ? (
+                                      <Alert className="mt-3 border-blue-200 bg-blue-50">
+                                        <AlertTriangle className="h-4 w-4 text-blue-600" />
+                                        <AlertDescription className="text-blue-800">
+                                          Most of the value comes from <strong>growth expectations</strong> ({advancedResults.pvgo.pvgoPercent.toFixed(1)}%). 
+                                          Ensure growth assumptions are realistic.
+                                        </AlertDescription>
+                                      </Alert>
+                                    ) : (
+                                      <Alert className="mt-3 border-green-200 bg-green-50">
+                                        <CheckCircle className="h-4 w-4 text-green-600" />
+                                        <AlertDescription className="text-green-800">
+                                          Value is primarily driven by <strong>current assets</strong>. 
+                                          Less dependent on uncertain growth forecasts.
+                                        </AlertDescription>
+                                      </Alert>
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <p className="text-sm text-slate-500">Enter EPS to see PVGO analysis.</p>
+                              )}
+                            </TabsContent>
+
+                            {/* Implied Growth Tab */}
+                            <TabsContent value="growth" className="space-y-4 pt-4">
+                              {advancedResults.impliedGrowth !== null ? (
+                                <>
+                                  <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-amber-50 p-4 rounded-lg">
+                                      <p className="text-xs text-amber-600">Your Assumed Growth</p>
+                                      <p className="text-xl font-bold text-amber-700">
+                                        {result.growth_rate.toFixed(1)}%
+                                      </p>
+                                      <p className="text-xs text-amber-500">From your forecast</p>
+                                    </div>
+                                    <div className="bg-purple-50 p-4 rounded-lg">
+                                      <p className="text-xs text-purple-600">Market's Implied Growth</p>
+                                      <p className="text-xl font-bold text-purple-700">
+                                        {(advancedResults.impliedGrowth * 100).toFixed(2)}%
+                                      </p>
+                                      <p className="text-xs text-purple-500">What the market is pricing in</p>
+                                    </div>
+                                  </div>
+                                  <div className="bg-slate-50 p-4 rounded-lg">
+                                    <p className="text-sm text-slate-600">Growth Gap Analysis:</p>
+                                    <div className="mt-2 text-sm">
+                                      <div className="flex justify-between border-b py-1">
+                                        <span className="text-slate-500">Market's Implied Growth:</span>
+                                        <span className="font-medium text-purple-600">{(advancedResults.impliedGrowth * 100).toFixed(2)}%</span>
+                                      </div>
+                                      <div className="flex justify-between border-b py-1">
+                                        <span className="text-slate-500">Your Estimated Growth:</span>
+                                        <span className="font-medium text-amber-600">{result.growth_rate.toFixed(1)}%</span>
+                                      </div>
+                                      <div className="flex justify-between py-1 font-semibold">
+                                        <span className="text-slate-500">Growth Gap:</span>
+                                        <span className={advancedResults.impliedGrowth * 100 > result.growth_rate ? 'text-red-600' : 'text-green-600'}>
+                                          {((advancedResults.impliedGrowth * 100 - result.growth_rate).toFixed(2))}%
+                                        </span>
+                                      </div>
+                                    </div>
+                                    {advancedResults.impliedGrowth * 100 > result.growth_rate + 1 ? (
+                                      <Alert className="mt-3 border-red-200 bg-red-50">
+                                        <AlertTriangle className="h-4 w-4 text-red-600" />
+                                        <AlertDescription className="text-red-800">
+                                          Market expects growth {(advancedResults.impliedGrowth * 100 - result.growth_rate).toFixed(2)}% higher than your estimate. 
+                                          Stock may be overvalued unless growth accelerates.
+                                        </AlertDescription>
+                                      </Alert>
+                                    ) : advancedResults.impliedGrowth * 100 < result.growth_rate - 1 ? (
+                                      <Alert className="mt-3 border-green-200 bg-green-50">
+                                        <CheckCircle className="h-4 w-4 text-green-600" />
+                                        <AlertDescription className="text-green-800">
+                                          Market expects lower growth than your estimate. Potential undervaluation opportunity.
+                                        </AlertDescription>
+                                      </Alert>
+                                    ) : (
+                                      <Alert className="mt-3 border-blue-200 bg-blue-50">
+                                        <Info className="h-4 w-4 text-blue-600" />
+                                        <AlertDescription className="text-blue-800">
+                                          Your growth estimate is close to market expectations. Fairly valued.
+                                        </AlertDescription>
+                                      </Alert>
+                                    )}
+                                  </div>
+                                </>
+                              ) : (
+                                <p className="text-sm text-slate-500">Implied growth calculation requires valid inputs.</p>
+                              )}
+                            </TabsContent>
+
+                            {/* Sensitivity Matrix Tab */}
+                            <TabsContent value="sensitivity" className="space-y-4 pt-4">
+                              {advancedResults.sensitivityMatrix && advancedResults.sensitivityMatrix.length > 0 ? (
+                                <>
+                                  <p className="text-xs text-slate-500">Intrinsic Value Matrix (Growth% × Discount%)</p>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-sm">
+                                      <thead className="bg-slate-50">
+                                        <tr>
+                                          <th className="p-2 text-left">Growth \ Discount</th>
+                                          {advancedResults.sensitivityMatrix[0].map((col, idx) => (
+                                            <th key={idx} className="p-2 text-right font-medium">
+                                              {col.discount.toFixed(1)}%
+                                            </th>
+                                          ))}
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {advancedResults.sensitivityMatrix.map((row, idx) => (
+                                          <tr key={idx} className="border-t">
+                                            <td className="p-2 font-medium">{row[0].growth.toFixed(1)}%</td>
+                                            {row.map((cell, cellIdx) => (
+                                              <td key={cellIdx} className="p-2 text-right">
+                                                <span className={
+                                                  cell.value > result.current_price ? 'text-green-600 font-medium' : 
+                                                  cell.value < result.current_price * 0.8 ? 'text-red-600' : 'text-amber-600'
+                                                }>
+                                                  ${cell.value.toFixed(0)}
+                                                </span>
+                                              </td>
+                                            ))}
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  <div className="flex justify-center gap-4 text-xs mt-2">
+                                    <div><span className="text-green-600">●</span> > Current Price</div>
+                                    <div><span className="text-amber-600">●</span> Near Current Price</div>
+                                    <div><span className="text-red-600">●</span> &lt; 80% of Current Price</div>
+                                  </div>
+                                </>
+                              ) : (
+                                <p className="text-sm text-slate-500">Sensitivity matrix requires valid inputs.</p>
+                              )}
+
+                              {/* Terminal Value Sensitivity */}
+                              {advancedResults.tvSensitivity && advancedResults.tvSensitivity.length > 0 && (
+                                <div className="mt-4">
+                                  <p className="text-xs text-slate-500 font-medium">Terminal Value Sensitivity</p>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-sm mt-2">
+                                      <thead className="bg-slate-50">
+                                        <tr>
+                                          <th className="p-2 text-left">Terminal Growth</th>
+                                          <th className="p-2 text-right">Terminal Value</th>
+                                          <th className="p-2 text-right">PV of Terminal</th>
+                                          <th className="p-2 text-right">% of Base</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {advancedResults.tvSensitivity.map((item, idx) => (
+                                          <tr key={idx} className="border-t">
+                                            <td className="p-2 font-medium">{item.terminalGrowth}%</td>
+                                            <td className="p-2 text-right">${(item.terminalValue).toFixed(0)}</td>
+                                            <td className="p-2 text-right">${item.presentValue.toFixed(2)}</td>
+                                            <td className="p-2 text-right">
+                                              <span className={item.percentOfBase > 105 ? 'text-green-600' : item.percentOfBase < 95 ? 'text-red-600' : 'text-amber-600'}>
+                                                {item.percentOfBase}%
+                                              </span>
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              )}
+                            </TabsContent>
+
+                            {/* Peer Comparison Tab */}
+                            <TabsContent value="peers" className="space-y-4 pt-4">
+                              {advancedResults.peerComparison ? (
+                                <>
+                                  <div className="grid grid-cols-2 gap-4">
+                                    <div className="bg-blue-50 p-4 rounded-lg">
+                                      <p className="text-xs text-blue-600">Current P/E</p>
+                                      <p className="text-xl font-bold text-blue-700">
+                                        {advancedResults.peerComparison.currentPE.toFixed(1)}x
+                                      </p>
+                                    </div>
+                                    <div className="bg-slate-50 p-4 rounded-lg">
+                                      <p className="text-xs text-slate-600">Industry Average P/E</p>
+                                      <p className="text-xl font-bold text-slate-700">
+                                        {advancedResults.peerComparison.industryPE}x
+                                      </p>
+                                    </div>
+                                  </div>
+                                  <div className="bg-slate-50 p-4 rounded-lg">
+                                    <p className="text-sm font-medium">Peer Comparison Assessment</p>
+                                    <div className="mt-2 text-sm">
+                                      <div className="flex justify-between border-b py-1">
+                                        <span className="text-slate-500">Current P/E:</span>
+                                        <span className="font-medium">{advancedResults.peerComparison.currentPE.toFixed(1)}x</span>
+                                      </div>
+                                      <div className="flex justify-between border-b py-1">
+                                        <span className="text-slate-500">Industry P/E:</span>
+                                        <span className="font-medium">{advancedResults.peerComparison.industryPE}x</span>
+                                      </div>
+                                      <div className="flex justify-between py-1 font-semibold">
+                                        <span className="text-slate-500">Assessment:</span>
+                                        <span className={advancedResults.peerComparison.peComparison.includes('Above') ? 'text-red-600' : advancedResults.peerComparison.peComparison.includes('Below') ? 'text-green-600' : 'text-amber-600'}>
+                                          {advancedResults.peerComparison.peComparison}
+                                        </span>
+                                      </div>
+                                      <div className="flex justify-between py-1 text-xs text-slate-500">
+                                        <span>Fair Value Estimate:</span>
+                                        <span>${advancedResults.peerComparison.fairValueEstimate.toFixed(2)}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </>
+                              ) : (
+                                <p className="text-sm text-slate-500">Enter EPS to see peer comparison.</p>
+                              )}
+                            </TabsContent>
+                          </Tabs>
+                        </CardContent>
+                      </Card>
+                    )}
+
                     <div className="border-t pt-4">
                       <h4 className="font-semibold text-slate-900 mb-3">Scenario Analysis</h4>
                       <div className="overflow-x-auto">
@@ -985,7 +1488,6 @@ export default function Calculator() {
                       </div>
                     </div>
 
-                    {/* Key Financial Metrics */}
                     <div className="grid grid-cols-2 gap-4 text-sm border-t pt-4">
                       <div>
                         <p className="text-slate-600">FCF per Share (TTM)</p>
@@ -1009,7 +1511,6 @@ export default function Calculator() {
                       )}
                     </div>
 
-                    {/* DCF Breakdown */}
                     {result.dcf_breakdown && (
                       <div className="border-t pt-4">
                         <h4 className="font-semibold text-slate-900 mb-3">Base Case DCF Breakdown</h4>
@@ -1034,7 +1535,6 @@ export default function Calculator() {
                       </div>
                     )}
 
-                    {/* Yearly Projections Table */}
                     {yearlyProjections.length > 0 && (
                       <div className="border-t pt-4">
                         <h4 className="font-semibold text-slate-900 mb-3">Base Case - Yearly FCF Projections</h4>
